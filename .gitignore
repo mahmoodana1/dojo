@@ -1,0 +1,14 @@
+# Compiled binary
+/dojo
+
+# Local database lives in ~/.local/share/dojo, but ignore any stray copies
+*.db
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+
+# Editor/scratch
+*.swp
+*~
