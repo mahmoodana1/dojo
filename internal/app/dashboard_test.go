@@ -17,8 +17,8 @@ func dashModel() *Model {
 		},
 		stats: store.DashboardStats{
 			Total: 100, Solved: 4, StreakDays: 2,
-			Activity: make([]int, store.ActivityDays),
-			DiffTotal: map[string]int{"Easy": 40, "Medium": 40, "Hard": 20},
+			Activity:   make([]int, store.ActivityDays),
+			DiffTotal:  map[string]int{"Easy": 40, "Medium": 40, "Hard": 20},
 			DiffSolved: map[string]int{"Easy": 3, "Medium": 1},
 			Due: []store.Problem{
 				{ID: 10, FrontendID: 207, Title: "Course Schedule", Difficulty: "Medium"},

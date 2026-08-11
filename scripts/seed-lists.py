@@ -60,6 +60,159 @@ BLIND_75 = [
 ]
 
 
+# NeetCode 150 = Blind 75 + these. Premium entries use the same Dojo Originals
+# stand-ins as the Blind 75 above.
+NEETCODE_EXTRA = [
+    # arrays & hashing / two pointers / sliding window
+    "valid-sudoku", "two-sum-ii-input-array-is-sorted", "trapping-rain-water",
+    "permutation-in-string", "sliding-window-maximum",
+    # stack
+    "min-stack", "evaluate-reverse-polish-notation", "generate-parentheses",
+    "daily-temperatures", "car-fleet", "largest-rectangle-in-histogram",
+    # binary search
+    "binary-search", "search-a-2d-matrix", "koko-eating-bananas",
+    "time-based-key-value-store", "median-of-two-sorted-arrays",
+    # linked list
+    "copy-list-with-random-pointer", "add-two-numbers",
+    "find-the-duplicate-number", "lru-cache", "reverse-nodes-in-k-group",
+    # trees
+    "diameter-of-binary-tree", "balanced-binary-tree",
+    "binary-tree-right-side-view", "count-good-nodes-in-binary-tree",
+    # heap
+    "kth-largest-element-in-a-stream", "last-stone-weight",
+    "k-closest-points-to-origin", "kth-largest-element-in-an-array",
+    "task-scheduler", "design-twitter",
+    # backtracking
+    "subsets", "combination-sum", "permutations", "subsets-ii",
+    "combination-sum-ii", "palindrome-partitioning",
+    "letter-combinations-of-a-phone-number", "n-queens",
+    # graphs
+    "max-area-of-island", "surrounded-regions", "rotting-oranges",
+    "course-schedule-ii", "redundant-connection", "word-ladder",
+    "reconstruct-itinerary", "min-cost-to-connect-all-points",
+    "network-delay-time", "swim-in-rising-water",
+    "cheapest-flights-within-k-stops",
+    # dp
+    "min-cost-climbing-stairs", "partition-equal-subset-sum",
+    "best-time-to-buy-and-sell-stock-with-cooldown", "coin-change-ii",
+    "target-sum", "interleaving-string",
+    "longest-increasing-path-in-a-matrix", "distinct-subsequences",
+    "edit-distance", "burst-balloons", "regular-expression-matching",
+    # greedy
+    "jump-game-ii", "gas-station", "hand-of-straights",
+    "merge-triplets-to-form-target-triplet", "partition-labels",
+    "valid-parenthesis-string",
+    # intervals
+    "minimum-interval-to-include-each-query",
+    # math & geometry / bits
+    "happy-number", "plus-one", "powx-n", "multiply-strings",
+    "detect-squares", "single-number", "reverse-integer",
+]
+
+GRIND_75 = [
+    "two-sum", "valid-parentheses", "merge-two-sorted-lists",
+    "best-time-to-buy-and-sell-stock", "valid-palindrome", "invert-binary-tree",
+    "valid-anagram", "binary-search", "flood-fill",
+    "lowest-common-ancestor-of-a-binary-search-tree", "balanced-binary-tree",
+    "linked-list-cycle", "implement-queue-using-stacks", "first-bad-version",
+    "ransom-note", "climbing-stairs", "longest-palindrome", "reverse-linked-list",
+    "majority-element", "add-binary", "diameter-of-binary-tree",
+    "middle-of-the-linked-list", "maximum-depth-of-binary-tree",
+    "contains-duplicate", "min-stack", "maximum-subarray", "insert-interval",
+    "01-matrix", "k-closest-points-to-origin",
+    "longest-substring-without-repeating-characters", "3sum",
+    "binary-tree-level-order-traversal", "clone-graph",
+    "evaluate-reverse-polish-notation", "course-schedule",
+    "implement-trie-prefix-tree", "coin-change", "product-of-array-except-self",
+    "busy-calendar-check", "validate-binary-search-tree", "number-of-islands",
+    "rotting-oranges", "search-in-rotated-sorted-array", "combination-sum",
+    "permutations", "merge-intervals", "lowest-common-ancestor-of-a-binary-tree",
+    "time-based-key-value-store", "accounts-merge", "sort-colors", "word-break",
+    "partition-equal-subset-sum", "string-to-integer-atoi", "spiral-matrix",
+    "subsets", "binary-tree-right-side-view", "longest-palindromic-substring",
+    "unique-paths", "construct-binary-tree-from-preorder-and-inorder-traversal",
+    "container-with-most-water", "letter-combinations-of-a-phone-number",
+    "word-search", "find-all-anagrams-in-a-string", "minimum-height-trees",
+    "task-scheduler", "kth-smallest-element-in-a-bst", "minimum-window-substring",
+    "serialize-and-deserialize-binary-tree", "trapping-rain-water",
+    "find-median-from-data-stream", "word-ladder", "basic-calculator",
+    "maximum-profit-in-job-scheduling", "merge-k-sorted-lists",
+    "largest-rectangle-in-histogram",
+]
+
+TOP_INTERVIEW_150 = [
+    "merge-sorted-array", "remove-element", "remove-duplicates-from-sorted-array",
+    "remove-duplicates-from-sorted-array-ii", "majority-element", "rotate-array",
+    "best-time-to-buy-and-sell-stock", "best-time-to-buy-and-sell-stock-ii",
+    "jump-game", "jump-game-ii", "h-index", "insert-delete-getrandom-o1",
+    "product-of-array-except-self", "gas-station", "candy", "trapping-rain-water",
+    "roman-to-integer", "integer-to-roman", "length-of-last-word",
+    "longest-common-prefix", "reverse-words-in-a-string", "zigzag-conversion",
+    "find-the-index-of-the-first-occurrence-in-a-string", "text-justification",
+    "valid-palindrome", "is-subsequence", "two-sum-ii-input-array-is-sorted",
+    "container-with-most-water", "3sum", "minimum-size-subarray-sum",
+    "longest-substring-without-repeating-characters",
+    "substring-with-concatenation-of-all-words", "minimum-window-substring",
+    "valid-sudoku", "spiral-matrix", "rotate-image", "set-matrix-zeroes",
+    "game-of-life", "ransom-note", "isomorphic-strings", "word-pattern",
+    "valid-anagram", "group-anagrams", "two-sum", "happy-number",
+    "contains-duplicate-ii", "longest-consecutive-sequence", "summary-ranges",
+    "merge-intervals", "insert-interval",
+    "minimum-number-of-arrows-to-burst-balloons", "valid-parentheses",
+    "simplify-path", "min-stack", "evaluate-reverse-polish-notation",
+    "basic-calculator", "linked-list-cycle", "add-two-numbers",
+    "merge-two-sorted-lists", "copy-list-with-random-pointer",
+    "reverse-linked-list-ii", "reverse-nodes-in-k-group",
+    "remove-nth-node-from-end-of-list", "remove-duplicates-from-sorted-list-ii",
+    "rotate-list", "partition-list", "lru-cache", "maximum-depth-of-binary-tree",
+    "same-tree", "invert-binary-tree", "symmetric-tree",
+    "construct-binary-tree-from-preorder-and-inorder-traversal",
+    "construct-binary-tree-from-inorder-and-postorder-traversal",
+    "populating-next-right-pointers-in-each-node-ii",
+    "flatten-binary-tree-to-linked-list", "path-sum", "sum-root-to-leaf-numbers",
+    "binary-tree-maximum-path-sum", "binary-search-tree-iterator",
+    "count-complete-tree-nodes", "lowest-common-ancestor-of-a-binary-tree",
+    "binary-tree-right-side-view", "average-of-levels-in-binary-tree",
+    "binary-tree-level-order-traversal",
+    "binary-tree-zigzag-level-order-traversal",
+    "minimum-absolute-difference-in-bst", "kth-smallest-element-in-a-bst",
+    "validate-binary-search-tree", "number-of-islands", "surrounded-regions",
+    "clone-graph", "evaluate-division", "course-schedule", "course-schedule-ii",
+    "snakes-and-ladders", "minimum-genetic-mutation", "word-ladder",
+    "implement-trie-prefix-tree", "design-add-and-search-words-data-structure",
+    "word-search-ii", "letter-combinations-of-a-phone-number", "combinations",
+    "permutations", "combination-sum", "n-queens-ii", "generate-parentheses",
+    "word-search", "convert-sorted-array-to-binary-search-tree", "sort-list",
+    "construct-quad-tree", "merge-k-sorted-lists", "maximum-subarray",
+    "maximum-sum-circular-subarray", "search-insert-position",
+    "search-a-2d-matrix", "find-peak-element", "search-in-rotated-sorted-array",
+    "find-first-and-last-position-of-element-in-sorted-array",
+    "find-minimum-in-rotated-sorted-array", "median-of-two-sorted-arrays",
+    "kth-largest-element-in-an-array", "ipo", "find-k-pairs-with-smallest-sums",
+    "find-median-from-data-stream", "add-binary", "reverse-bits",
+    "number-of-1-bits", "single-number", "single-number-ii",
+    "bitwise-and-of-numbers-range", "palindrome-number", "plus-one",
+    "factorial-trailing-zeroes", "sqrtx", "powx-n", "max-points-on-a-line",
+    "climbing-stairs", "house-robber", "word-break", "coin-change",
+    "longest-increasing-subsequence", "triangle", "minimum-path-sum",
+    "unique-paths-ii", "longest-palindromic-substring", "interleaving-string",
+    "edit-distance", "best-time-to-buy-and-sell-stock-iii",
+    "best-time-to-buy-and-sell-stock-iv", "maximal-square",
+]
+
+# Topic ladders: tag name -> list title. 40 problems each, easy -> hard.
+LADDERS = {
+    "Graph Theory": "Graphs ladder",
+    "Dynamic Programming": "DP ladder",
+    "Tree": "Trees ladder",
+    "Binary Search": "Binary Search ladder",
+    "Two Pointers": "Two Pointers ladder",
+    "Sliding Window": "Sliding Window ladder",
+    "Backtracking": "Backtracking ladder",
+    "Heap (Priority Queue)": "Heap ladder",
+}
+
+
 def rebuild(db: sqlite3.Connection, slug: str, name: str, desc: str,
             member_sql: str, params: tuple = ()) -> int:
     db.execute(
@@ -113,6 +266,37 @@ def main() -> None:
         "SELECT 1 FROM problems WHERE slug=? AND paid_only=0", (s,)).fetchone()]
     print(f"Blind 75: {n} problems" +
           (f" ({len(missing)} unavailable: premium or renamed: {missing})" if missing else ""))
+
+    def slug_list(list_slug: str, name: str, desc: str, slugs: list[str]) -> None:
+        marks = ",".join("?" * len(slugs))
+        n = rebuild(db, list_slug, name, desc,
+                    f"slug IN ({marks}) AND paid_only = 0", tuple(slugs))
+        missing = [s for s in slugs if not db.execute(
+            "SELECT 1 FROM problems WHERE slug=? AND paid_only=0", (s,)).fetchone()]
+        print(f"{name}: {n} problems" +
+              (f" ({len(missing)} unavailable: {missing})" if missing else ""))
+
+    slug_list("neetcode-150", "NeetCode 150",
+              "Blind 75 grown to the full NeetCode roadmap.",
+              BLIND_75 + NEETCODE_EXTRA)
+    slug_list("grind-75", "Grind 75",
+              "Tech-interview essentials, beginner-friendly order.", GRIND_75)
+    slug_list("top-interview-150", "Top Interview 150",
+              "LeetCode's official interview study plan.", TOP_INTERVIEW_150)
+
+    for tag, title in LADDERS.items():
+        n = rebuild(db, title.lower().replace(" ", "-"), title,
+                    f"40 {tag} problems, easy to hard.",
+                    """id IN (SELECT p.id FROM problems p
+                              JOIN problem_tags pt ON pt.problem_id = p.id
+                              JOIN tags t          ON t.id = pt.tag_id
+                              WHERE t.name = ? AND p.paid_only = 0
+                                AND p.description_md IS NOT NULL
+                              ORDER BY CASE p.difficulty WHEN 'Easy' THEN 0
+                                       WHEN 'Medium' THEN 1 ELSE 2 END,
+                                       p.acceptance_rate DESC
+                              LIMIT 40)""", (tag,))
+        print(f"{title}: {n} problems")
 
     db.commit()
     print("lists seeded. press s (or restart) in dojo to see them.")

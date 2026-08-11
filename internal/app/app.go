@@ -69,7 +69,10 @@ type editorDoneMsg struct{ err error }
 type tagCountsMsg []store.TagCount
 type attemptSavedMsg struct{}
 type errMsg struct{ err error }
-type tickMsg time.Time
+
+// tickMsg carries the tick-chain generation so a stale chain (from before a
+// screen switch changed the frame rate) dies instead of double-ticking.
+type tickMsg struct{ seq int }
 
 // dashItem is one selectable row on the dashboard.
 type dashItem struct {
@@ -100,12 +103,12 @@ type Model struct {
 	width  int
 	height int
 
-	problems []store.Problem
-	visible  []int // indexes into problems, post-filter
-	cursor   int   // index into visible
-	filter   textinput.Model
+	problems  []store.Problem
+	visible   []int // indexes into problems, post-filter
+	cursor    int   // index into visible
+	filter    textinput.Model
 	filtering bool
-	pending  string // "d" or "g" for dd / gg
+	pending   string // "d" or "g" for dd / gg
 
 	// structured filters (LeetCode-style browsing)
 	diffFilter map[string]bool // Easy/Medium/Hard toggles; empty = all
@@ -141,10 +144,17 @@ type Model struct {
 
 	// study lists (dashboard-driven browsing scopes)
 	lists       []store.ProblemList
-	dashCursor  int             // index into dashItems()
-	activeList  string          // name of the list currently scoping the browser
-	listMembers map[int64]bool  // nil = no list filter
-	quote       string          // sensei quote for this dashboard visit
+	dashCursor  int            // index into dashItems()
+	activeList  string         // name of the list currently scoping the browser
+	listMembers map[int64]bool // nil = no list filter
+	quote       string         // sensei quote for this dashboard visit
+
+	// animation state (see anim.go)
+	dashEnteredAt  time.Time // start of entrance animation
+	quoteChangedAt time.Time // start of quote fade-in
+	confettiAt     time.Time // zero = no celebration in flight
+	tickSeq        int       // generation guard for the tick chain
+	statsLoaded    bool      // suppresses confetti on the very first stats load
 }
 
 func New(st *store.Store) *Model {
@@ -153,17 +163,24 @@ func New(st *store.Store) *Model {
 	ti.Placeholder = "fuzzy title, or d:hard t:graph s:todo"
 	return &Model{st: st, keys: defaultKeyMap(), filter: ti, screen: screenDashboard,
 		diffFilter: map[string]bool{}, tagFilter: map[string]bool{},
-		renderCache: map[int64]string{},
-		quote:       senseiQuotes[rand.Intn(len(senseiQuotes))]}
+		renderCache:   map[int64]string{},
+		quote:         senseiQuotes[rand.Intn(len(senseiQuotes))],
+		dashEnteredAt: time.Now(), quoteChangedAt: time.Now()}
 }
 
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(m.loadProblems(), m.loadContent(), m.loadStats(), m.loadLists(), tick())
+	return tea.Batch(m.loadProblems(), m.loadContent(), m.loadStats(), m.loadLists(), m.tickCmd())
 }
 
-// tick keeps the dashboard clock alive.
-func tick() tea.Cmd {
-	return tea.Tick(30*time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
+// tickCmd keeps time flowing: ~12 FPS while the animated dashboard is
+// visible, a lazy 30 s heartbeat everywhere else.
+func (m *Model) tickCmd() tea.Cmd {
+	seq := m.tickSeq
+	d := idleFrame
+	if m.screen == screenDashboard {
+		d = animFrame
+	}
+	return tea.Tick(d, func(time.Time) tea.Msg { return tickMsg{seq} })
 }
 
 // dashItems flattens every selectable dashboard row: browsing scopes first,
@@ -561,7 +578,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case statsMsg:
-		m.stats = store.DashboardStats(msg)
+		ns := store.DashboardStats(msg)
+		if m.statsLoaded && ns.TodaySolved >= dailyGoal && m.stats.TodaySolved < dailyGoal {
+			m.confettiAt = time.Now() // just crossed the goal line 🎉
+		}
+		m.statsLoaded = true
+		m.stats = ns
 		m.clampDash()
 		return m, nil
 
@@ -571,7 +593,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
-		return m, tick()
+		if msg.seq != m.tickSeq {
+			return m, nil // stale chain from before a screen switch
+		}
+		if m.screen == screenDashboard && time.Since(m.quoteChangedAt) > quotePeriod {
+			m.quote = senseiQuotes[rand.Intn(len(senseiQuotes))]
+			m.quoteChangedAt = time.Now()
+		}
+		return m, m.tickCmd()
 
 	case membersMsg:
 		m.activeList = msg.name
@@ -731,8 +760,11 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.screen = screenDashboard
 			m.quote = senseiQuotes[rand.Intn(len(senseiQuotes))]
+			m.quoteChangedAt = time.Now()
+			m.dashEnteredAt = time.Now() // replay the entrance animation
 		}
-		return m, m.loadStats()
+		m.tickSeq++ // retire the old tick chain, start one at the right rate
+		return m, tea.Batch(m.loadStats(), m.tickCmd())
 	}
 
 	if m.screen == screenDashboard {
@@ -1066,159 +1098,6 @@ func (m *Model) viewDetail() string {
 		content = styleMedium.Render("  judging…") + "\n" + content
 	}
 	return style.Width(m.detailWidth() - 2).Height(m.height - 3).Render(content)
-}
-
-func progressBar(solved, total, width int) string {
-	if total == 0 {
-		return styleDim.Render(strings.Repeat("░", width))
-	}
-	filled := solved * width / total
-	return stylePass.Render(strings.Repeat("█", filled)) +
-		styleDim.Render(strings.Repeat("░", width-filled))
-}
-
-// heatStrip renders the last 12 weeks of activity as a GitHub-style grid:
-// columns are weeks (oldest left), rows split each week over 7 days.
-func heatStrip(activity []int) string {
-	cell := func(n int) string {
-		switch {
-		case n <= 0:
-			return styleDim.Render("·")
-		case n == 1:
-			return styleEasy.Render("░")
-		case n <= 3:
-			return styleEasy.Render("▒")
-		case n <= 5:
-			return stylePass.Render("▓")
-		default:
-			return stylePass.Render("█")
-		}
-	}
-	weeks := len(activity) / 7
-	var rows []string
-	for r := 0; r < 7; r++ {
-		var b strings.Builder
-		b.WriteString("  ")
-		for c := 0; c < weeks; c++ {
-			b.WriteString(cell(activity[c*7+r]) + " ")
-		}
-		rows = append(rows, b.String())
-	}
-	return strings.Join(rows, "\n")
-}
-
-func truncate(s string, w int) string {
-	r := []rune(s)
-	if len(r) <= w {
-		return s
-	}
-	return string(r[:w-1]) + "…"
-}
-
-func greeting() string {
-	switch h := time.Now().Hour(); {
-	case h < 5:
-		return "burning the midnight oil"
-	case h < 12:
-		return "good morning"
-	case h < 18:
-		return "good afternoon"
-	default:
-		return "good evening"
-	}
-}
-
-// dailyGoal is the number of solves that fills the "today" bar.
-const dailyGoal = 3
-
-func (m *Model) viewDashboard() string {
-	s := m.stats
-
-	// --- left column: the day at a glance --------------------------------
-	var l strings.Builder
-	l.WriteString(styleHeader.Render("道場  dojo") + styleDim.Render("  — "+greeting()) + "\n")
-	l.WriteString(styleDim.Render("  "+time.Now().Format("Mon 02 Jan · 15:04")) + "\n\n")
-	l.WriteString(styleDim.Render("  “"+m.quote+"”") + "\n\n")
-
-	l.WriteString(styleHeader.Render("today") + "\n")
-	fmt.Fprintf(&l, "  %s  ·  %d attempt(s)  ·  %d min  ·  %d xp\n",
-		stylePass.Render(fmt.Sprintf("%d solved", s.TodaySolved)),
-		s.TodayAttempts, s.TodayMinutes, s.TodayXP)
-	goal := fmt.Sprintf("%d/%d", s.TodaySolved, dailyGoal)
-	if s.TodaySolved >= dailyGoal {
-		goal = stylePass.Render(goal + " — goal met! 🎉")
-	}
-	fmt.Fprintf(&l, "  goal  %s %s\n\n", progressBar(min(s.TodaySolved, dailyGoal), dailyGoal, 12), goal)
-
-	fmt.Fprintf(&l, "%s %s   %s %d / %d\n",
-		styleHeader.Render("streak"),
-		stylePass.Render(fmt.Sprintf("🔥 %d day(s)", s.StreakDays)),
-		styleHeader.Render("solved"), s.Solved, s.Total)
-	l.WriteString(heatStrip(s.Activity) + "\n")
-	l.WriteString(styleDim.Render("  last 12 weeks") + "\n\n")
-
-	l.WriteString(styleHeader.Render("progress") + "\n")
-	for _, d := range []string{"Easy", "Medium", "Hard"} {
-		fmt.Fprintf(&l, "  %s %s %d/%d\n",
-			diffStyle(d).Render(fmt.Sprintf("%-7s", d)),
-			progressBar(s.DiffSolved[d], s.DiffTotal[d], 14),
-			s.DiffSolved[d], s.DiffTotal[d])
-	}
-	if len(s.WeakTags) > 0 {
-		l.WriteString("\n" + styleHeader.Render("weak tags") + styleDim.Render("  — grind these") + "\n")
-		for _, t := range s.WeakTags {
-			l.WriteString("  · " + styleHard.Render(t) + "\n")
-		}
-	}
-
-	// --- right column: everything selectable -----------------------------
-	var r strings.Builder
-	idx := 0
-	row := func(line string) {
-		if idx == m.dashCursor {
-			line = styleCursor.Render(line)
-		}
-		r.WriteString(line + "\n")
-		idx++
-	}
-	probRow := func(icon string, p *store.Problem) {
-		row(fmt.Sprintf("  %s %s %s %s", icon,
-			styleDim.Render(fmt.Sprintf("%4d", p.FrontendID)),
-			fmt.Sprintf("%-32s", truncate(p.Title, 32)),
-			diffStyle(p.Difficulty).Render(p.Difficulty)))
-	}
-
-	r.WriteString(styleHeader.Render("study lists") + "\n")
-	row(fmt.Sprintf("  %-22s %s %d/%d", "All problems",
-		progressBar(s.Solved, s.Total, 14), s.Solved, s.Total))
-	for _, pl := range m.lists {
-		row(fmt.Sprintf("  %-22s %s %d/%d", truncate(pl.Name, 22),
-			progressBar(pl.Solved, pl.Total, 14), pl.Solved, pl.Total))
-	}
-
-	r.WriteString("\n" + styleHeader.Render("due for review") +
-		styleDim.Render("  — spaced repetition says now") + "\n")
-	if len(s.Due) == 0 {
-		r.WriteString(styleDim.Render("  nothing due — the queue is clear ✓") + "\n")
-	}
-	for i := range s.Due {
-		probRow(styleMedium.Render("↻"), &s.Due[i])
-	}
-
-	r.WriteString("\n" + styleHeader.Render("sensei suggests") +
-		styleDim.Render("  — fresh picks for you") + "\n")
-	if len(s.Suggested) == 0 {
-		r.WriteString(styleDim.Render("  nothing left to suggest — solve everything again, faster") + "\n")
-	}
-	for i := range s.Suggested {
-		probRow(stylePass.Render("★"), &s.Suggested[i])
-	}
-
-	leftW := max(44, m.width*45/100)
-	body := lipgloss.JoinHorizontal(lipgloss.Top,
-		lipgloss.NewStyle().Width(leftW).Render(l.String()), r.String())
-	hint := styleDim.Render("  j/k move · ⏎ open · gg/G jump · D browse · R help · q quit")
-	return lipgloss.NewStyle().Padding(1, 2).Render(body + "\n" + hint)
 }
 
 func (m *Model) viewTagPicker() string {

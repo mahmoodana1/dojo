@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -369,6 +370,35 @@ type DashboardStats struct {
 	// the weakest tags (random unsolved when there's no history yet)
 	Due       []Problem
 	Suggested []Problem
+
+	// lifetime XP across all daily_stats rows — drives the belt rank
+	TotalXP int
+	// reviews coming due per day: [0] = today (incl. overdue), [6] = +6 days
+	Forecast [7]int
+	// most recent attempts, newest first
+	Recent []AttemptRow
+	// personal bests; zero values mean "no history yet"
+	Records Records
+}
+
+// AttemptRow is one line of the dashboard's recent-activity feed.
+type AttemptRow struct {
+	FrontendID int64
+	Title      string
+	Language   string
+	Passed     bool
+	WallMs     int64
+	FinishedAt time.Time
+}
+
+// Records are all-time personal bests.
+type Records struct {
+	FastestMin   float64 // shortest edit-to-green time, minutes
+	FastestTitle string
+	BestDay      int    // most solves in one day
+	BestDayDate  string // YYYY-MM-DD
+	LongestRun   int    // longest streak ever, days
+	FirstTryPct  int    // % of problems whose first attempt passed (-1 = none)
 }
 
 // ActivityDays is the span of the dashboard heat strip (12 weeks).
@@ -513,7 +543,122 @@ func (s *Store) Dashboard() (DashboardStats, error) {
 	if err != nil {
 		return st, err
 	}
+
+	// Everything below feeds decorative widgets: failures degrade to empty
+	// sections rather than killing the dashboard.
+	_ = s.db.QueryRow(`SELECT COALESCE(SUM(xp), 0) FROM daily_stats`).Scan(&st.TotalXP)
+	st.Forecast = s.forecast()
+	st.Recent, _ = s.RecentAttempts(6)
+	st.Records = s.records(days)
 	return st, nil
+}
+
+// forecast buckets pending reviews into the next 7 local days; anything
+// already overdue lands on today.
+func (s *Store) forecast() [7]int {
+	var f [7]int
+	horizon := time.Now().AddDate(0, 0, 7).UTC().Format(time.RFC3339)
+	rows, err := s.db.Query(`
+		SELECT r.due_at FROM reviews r
+		JOIN problems p ON p.id = r.problem_id AND p.hidden = 0
+		WHERE r.due_at <= ?`, horizon)
+	if err != nil {
+		return f
+	}
+	defer rows.Close()
+	today := time.Now()
+	midnight := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, today.Location())
+	for rows.Next() {
+		var raw string
+		if rows.Scan(&raw) != nil {
+			continue
+		}
+		due, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			continue
+		}
+		d := int(due.Local().Sub(midnight).Hours() / 24)
+		if d < 0 {
+			d = 0
+		}
+		if d < 7 {
+			f[d]++
+		}
+	}
+	return f
+}
+
+// RecentAttempts returns the newest n attempts joined with problem info.
+func (s *Store) RecentAttempts(n int) ([]AttemptRow, error) {
+	rows, err := s.db.Query(`
+		SELECT p.frontend_id, p.title, a.language, a.passed, a.wall_ms, a.finished_at
+		FROM attempts a JOIN problems p ON p.id = a.problem_id
+		ORDER BY a.finished_at DESC, a.id DESC LIMIT ?`, n)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AttemptRow
+	for rows.Next() {
+		var r AttemptRow
+		var raw string
+		if err := rows.Scan(&r.FrontendID, &r.Title, &r.Language, &r.Passed, &r.WallMs, &raw); err != nil {
+			return out, err
+		}
+		r.FinishedAt, _ = time.Parse(time.RFC3339, raw)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// records computes all-time personal bests. days is the daily_stats
+// attempts-per-day map the caller already loaded.
+func (s *Store) records(days map[string]int) Records {
+	rec := Records{FirstTryPct: -1}
+	_ = s.db.QueryRow(`
+		SELECT (julianday(a.finished_at) - julianday(a.started_at)) * 1440.0, p.title
+		FROM attempts a JOIN problems p ON p.id = a.problem_id
+		WHERE a.passed = 1 AND a.finished_at > a.started_at
+		ORDER BY 1 ASC LIMIT 1`).Scan(&rec.FastestMin, &rec.FastestTitle)
+	_ = s.db.QueryRow(`SELECT day, solved FROM daily_stats
+		WHERE solved > 0 ORDER BY solved DESC, day DESC LIMIT 1`).
+		Scan(&rec.BestDayDate, &rec.BestDay)
+
+	var firstTry sql.NullFloat64
+	_ = s.db.QueryRow(`
+		SELECT AVG(passed) FROM attempts a
+		WHERE a.id = (SELECT MIN(id) FROM attempts b WHERE b.problem_id = a.problem_id)`).
+		Scan(&firstTry)
+	if firstTry.Valid {
+		rec.FirstTryPct = int(firstTry.Float64*100 + 0.5)
+	}
+
+	// longest streak ever: walk the sorted active days
+	var active []string
+	for d, n := range days {
+		if n > 0 {
+			active = append(active, d)
+		}
+	}
+	sort.Strings(active)
+	run := 0
+	var prev time.Time
+	for _, d := range active {
+		t, err := time.Parse("2006-01-02", d)
+		if err != nil {
+			continue
+		}
+		if run > 0 && t.Sub(prev) == 24*time.Hour {
+			run++
+		} else {
+			run = 1
+		}
+		if run > rec.LongestRun {
+			rec.LongestRun = run
+		}
+		prev = t
+	}
+	return rec
 }
 
 // nullInt scans a possibly-NULL aggregate into an int.
