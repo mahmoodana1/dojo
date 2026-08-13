@@ -110,6 +110,23 @@ func TestAnsiImageUsesFullWidth(t *testing.T) {
 	}
 }
 
+// A square source must render square. With a 2.2 cell (JetBrains Mono) an
+// uncorrected renderer emits 10% too many rows, so circles become ovals.
+func TestAspectCorrection(t *testing.T) {
+	for _, tc := range []struct {
+		aspect   float64
+		wantRows int
+	}{
+		{2.0, 20}, // square cells: 40 cols wide, 40 px tall, 20 half-block rows
+		{2.2, 18}, // taller cells: fewer rows for the same on-screen shape
+	} {
+		got := rowsForAspect(40, 100, 100, tc.aspect)
+		if got != tc.wantRows {
+			t.Errorf("aspect %.1f: rows = %d, want %d", tc.aspect, got, tc.wantRows)
+		}
+	}
+}
+
 // A transparent-background diagram with dark strokes must composite over
 // white, or it renders invisible on a dark terminal.
 func TestTransparencyCompositesOverWhite(t *testing.T) {

@@ -629,6 +629,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case imageViewerDoneMsg:
+		if msg.err != nil {
+			m.err = msg.err
+		}
+		return m, nil
+
 	case editorDoneMsg:
 		if msg.err != nil {
 			m.err = msg.err
@@ -717,9 +723,14 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if p := m.selected(); p != nil && (m.detail == nil || m.detail.ID != p.ID) {
 			m.setDetail(p)
 		}
-		if m.detail != nil {
-			m.imageOpen, m.imageIdx = true, 0
+		if m.detail == nil {
+			return m, nil
 		}
+		// real pixels via kitty when available, half-block viewer otherwise
+		if kittyCapable() {
+			return m, m.openImageViewer()
+		}
+		m.imageOpen, m.imageIdx = true, 0
 		return m, nil
 	}
 

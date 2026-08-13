@@ -13,11 +13,13 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -25,6 +27,38 @@ var (
 	imgPlaceholderRe = regexp.MustCompile(`\*\[image: [^\]]*\]\*`)
 	imgTokenRe       = regexp.MustCompile(`DOJOIMG(\d+)X`)
 )
+
+// openImageViewer hands the terminal to kitty's icat, which draws the real
+// image at full resolution and — unlike a raw graphics escape — positions it
+// correctly even inside tmux. Same suspend-and-resume pattern as the editor.
+func (m *Model) openImageViewer() tea.Cmd {
+	if m.detail == nil {
+		return nil
+	}
+	imgs := localImages(m.detail.Slug)
+	if len(imgs) == 0 {
+		m.status = "no diagrams for this problem"
+		return nil
+	}
+	title := fmt.Sprintf("%d. %s", m.detail.FrontendID, m.detail.Title)
+	script := `clear
+title="$1"; shift
+printf '\n  \033[1;36m%s\033[0m   \033[2m(%d diagram(s))\033[0m\n\n' "$title" "$#"
+for f in "$@"; do
+  kitty +kitten icat --align center "$f" || exit 1
+  printf '\n'
+done
+printf '  \033[2mpress any key to return…\033[0m'
+old=$(stty -g 2>/dev/null); stty raw -echo 2>/dev/null
+head -c1 >/dev/null 2>&1
+[ -n "$old" ] && stty "$old" 2>/dev/null
+clear`
+	args := append([]string{"-c", script, "sh", title}, imgs...)
+	c := exec.Command("sh", args...)
+	return tea.ExecProcess(c, func(err error) tea.Msg { return imageViewerDoneMsg{err} })
+}
+
+type imageViewerDoneMsg struct{ err error }
 
 // viewImages renders the current problem's diagrams at full terminal size —
 // roughly double the pane's resolution, which is the sharpest this terminal
@@ -43,8 +77,8 @@ func (m *Model) viewImages() string {
 	head := fmt.Sprintf("%s  %s",
 		styleHeader.Render(fmt.Sprintf("%d. %s", m.detail.FrontendID, m.detail.Title)),
 		styleDim.Render(fmt.Sprintf("image %d/%d", idx+1, len(imgs))))
-	hint := styleDim.Render("n/p or ←/→ cycle · esc close")
 
+	hint := styleDim.Render("n/p or ←/→ cycle · esc close")
 	art, err := ansiImage(imgs[idx], m.width-4, m.height-6)
 	if err != nil {
 		art = styleFail.Render("cannot render " + filepath.Base(imgs[idx]) + ": " + err.Error())
@@ -121,6 +155,21 @@ func expandImageTokens(rendered, slug string, maxCols int) string {
 	})
 }
 
+// rowsForAspect gives the half-block row count that reproduces a sw×sh image
+// at cols wide without distortion. A half-block pixel is one cell wide and
+// half a cell tall, so it is square only when the cell is exactly 2:1; a
+// taller cell (JetBrains Mono is 2.2) needs proportionally fewer rows.
+func rowsForAspect(cols, sw, sh int, cellAsp float64) int {
+	if sw <= 0 || cellAsp <= 0 {
+		return 1
+	}
+	rows := int(float64(sh)/float64(sw)*float64(cols)*(2/cellAsp)/2 + 0.5)
+	if rows < 1 {
+		return 1
+	}
+	return rows
+}
+
 // ansiImage decodes a bitmap and renders it as ▀ half-blocks: each cell
 // carries two vertical pixels (foreground = top, background = bottom), which
 // is the highest fidelity a terminal without a graphics protocol can reach.
@@ -150,11 +199,12 @@ func ansiImage(path string, maxCols, maxRows int) (string, error) {
 	if cols < 4 {
 		cols = 4
 	}
-	rows := (sh*cols/sw + 1) / 2
+	asp := cellAspect()
+	rows := rowsForAspect(cols, sw, sh, asp)
 	// honour a row budget (fullscreen viewer) by shrinking width to match
 	if maxRows > 0 && rows > maxRows {
 		rows = maxRows
-		if c := rows * 2 * sw / sh; c < cols {
+		if c := int(float64(rows) * 2 * float64(sw) / float64(sh) * (asp / 2)); c < cols {
 			cols = max(4, c)
 		}
 	}

@@ -19,8 +19,25 @@ fi
 hyprctl dispatch 'hl.dsp.focus({ workspace = 7 })'
 
 if ! hyprctl clients -j | grep -q '"class": "dojo"'; then
+    # kitty, not alacritty: it speaks the graphics protocol, so problem
+    # diagrams render as real pixels instead of block approximations.
+    # Requires `set -g allow-passthrough on` in ~/.tmux.conf (it is) so the
+    # graphics escapes survive tmux.
+    #
     # tmux session: `i` opens the editor in a separate tmux window, and the
     # session (with your solve state) survives the terminal being closed.
-    setsid -f alacritty --class dojo \
-        -e tmux new-session -A -s dojo "$HOME/.local/bin/dojo" >/dev/null 2>&1
+    # A tmux server started from another terminal keeps its own stale
+    # environment, so KITTY_WINDOW_ID may never reach the session. Set the
+    # capability explicitly on the session instead of relying on inheritance.
+    if command -v kitty >/dev/null 2>&1; then
+        term="kitty --class dojo"
+        gfx=kitty
+    else
+        term="alacritty --class dojo"   # fallback: half-block images
+        gfx=none
+    fi
+    # shellcheck disable=SC2086
+    setsid -f $term \
+        -e tmux new-session -A -s dojo -e "DOJO_GRAPHICS=$gfx" \
+        "$HOME/.local/bin/dojo" >/dev/null 2>&1
 fi
