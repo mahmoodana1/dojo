@@ -100,6 +100,67 @@ func TestDashboardWidgetStats(t *testing.T) {
 	}
 }
 
+func TestSolveCreditGrantedOnce(t *testing.T) {
+	s := testStore(t)
+	seedProblem(t, s, 1, "Two Sum", "todo")
+	now := time.Now()
+
+	attempt := func(passed bool, at time.Time) Attempt {
+		return Attempt{ProblemID: 1, StartedAt: at.Add(-10 * time.Minute),
+			FinishedAt: at, Language: "python", Passed: passed,
+			CasesPassed: 3, CasesTotal: 3}
+	}
+	dailyRow := func() (solved, attempts, xp int) {
+		t.Helper()
+		if err := s.db.QueryRow(`SELECT solved, attempts, xp FROM daily_stats
+			WHERE day = ?`, now.Format("2006-01-02")).Scan(&solved, &attempts, &xp); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+
+	// fail, then pass, then re-run the pass twice more (same day)
+	for i, passed := range []bool{false, true, true, true} {
+		if err := s.RecordAttempt(attempt(passed, now.Add(time.Duration(i)*time.Minute))); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	solved, attempts, xp := dailyRow()
+	if solved != 1 {
+		t.Errorf("daily solved = %d, want 1 — re-runs must not re-register", solved)
+	}
+	if xp != 10 {
+		t.Errorf("daily xp = %d, want 10 (credit once)", xp)
+	}
+	if attempts != 4 {
+		t.Errorf("daily attempts = %d, want 4 — effort still counts", attempts)
+	}
+
+	// a pass on a later day is still no new solve credit
+	if err := s.RecordAttempt(attempt(true, now.AddDate(0, 0, 1))); err != nil {
+		t.Fatal(err)
+	}
+	var nextSolved, nextXP int
+	if err := s.db.QueryRow(`SELECT solved, xp FROM daily_stats WHERE day = ?`,
+		now.AddDate(0, 0, 1).Format("2006-01-02")).Scan(&nextSolved, &nextXP); err != nil {
+		t.Fatal(err)
+	}
+	if nextSolved != 0 || nextXP != 0 {
+		t.Errorf("next-day re-pass: solved=%d xp=%d, want 0/0", nextSolved, nextXP)
+	}
+
+	var status string
+	var firstSolved *string
+	if err := s.db.QueryRow(`SELECT status, first_solved_at FROM problems
+		WHERE id = 1`).Scan(&status, &firstSolved); err != nil {
+		t.Fatal(err)
+	}
+	if status != "solved" || firstSolved == nil {
+		t.Errorf("problem should stay solved with first_solved_at set: %s %v", status, firstSolved)
+	}
+}
+
 func TestDashboardEmptyDB(t *testing.T) {
 	s := testStore(t)
 	st, err := s.Dashboard()

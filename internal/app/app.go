@@ -643,7 +643,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.saveAttempt(rep)
 
 	case attemptSavedMsg:
-		return m, tea.Batch(m.loadProblems(), m.loadStats())
+		// refresh every dashboard surface: problem statuses, stats/queues,
+		// and study-list progress all reflect the attempt immediately
+		return m, tea.Batch(m.loadProblems(), m.loadStats(), m.loadLists())
 
 	case errMsg:
 		m.running = false

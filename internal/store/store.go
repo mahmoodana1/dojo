@@ -207,6 +207,15 @@ func (s *Store) RecordAttempt(a Attempt) error {
 		return err
 	}
 
+	// Solve credit is granted once per problem — the first green run. Later
+	// passes (SRS reviews, re-runs) still log attempts/minutes but never
+	// re-increment solved counts or XP.
+	var everSolved bool
+	if err := tx.QueryRow(`SELECT first_solved_at IS NOT NULL FROM problems
+		WHERE id = ?`, a.ProblemID).Scan(&everSolved); err != nil {
+		return err
+	}
+
 	status := "attempted"
 	if a.Passed {
 		status = "solved"
@@ -223,7 +232,7 @@ func (s *Store) RecordAttempt(a Attempt) error {
 
 	day := a.FinishedAt.Format("2006-01-02")
 	solved := 0
-	if a.Passed {
+	if a.Passed && !everSolved {
 		solved = 1
 	}
 	minutes := int(a.FinishedAt.Sub(a.StartedAt).Minutes())
