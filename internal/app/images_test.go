@@ -39,7 +39,7 @@ func writeTestPNG(t *testing.T, path string, w, h int) {
 func TestAnsiImageDimensions(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "img.png")
 	writeTestPNG(t, p, 120, 60)
-	out, err := ansiImage(p, 40)
+	out, err := ansiImage(p, 40, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,12 +62,51 @@ func TestAnsiImageDimensions(t *testing.T) {
 func TestAnsiImageNeverUpscales(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "small.png")
 	writeTestPNG(t, p, 12, 12)
-	out, err := ansiImage(p, 60)
+	out, err := ansiImage(p, 60, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if n := strings.Count(strings.Split(out, "\n")[0], "▀"); n != 12 {
 		t.Errorf("small image rendered at %d cols, want native 12", n)
+	}
+}
+
+// The fullscreen viewer passes a row budget; a tall image must shrink to fit
+// it instead of overflowing the screen.
+func TestAnsiImageHonoursRowBudget(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "tall.png")
+	writeTestPNG(t, p, 100, 400) // very tall
+	out, err := ansiImage(p, 80, 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(out, "\n")
+	if len(lines) > 12 {
+		t.Errorf("rows = %d, want <= 12", len(lines))
+	}
+	// aspect must be preserved: narrow enough to match the row cap
+	if n := strings.Count(lines[0], "▀"); n > 12 {
+		t.Errorf("cols = %d, too wide for a 1:4 image in 12 rows", n)
+	}
+}
+
+// Resolution must scale with the space available — that is the entire reason
+// the fullscreen viewer looks better than the side pane.
+func TestAnsiImageUsesFullWidth(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "wide.png")
+	writeTestPNG(t, p, 480, 340)
+	narrow, err := ansiImage(p, 56, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wide, err := ansiImage(p, 160, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nc := strings.Count(strings.Split(narrow, "\n")[0], "▀")
+	wc := strings.Count(strings.Split(wide, "\n")[0], "▀")
+	if nc != 56 || wc != 160 {
+		t.Errorf("cols = %d and %d, want 56 and 160 (no internal cap)", nc, wc)
 	}
 }
 

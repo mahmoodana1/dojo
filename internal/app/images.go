@@ -17,12 +17,41 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 var (
 	imgPlaceholderRe = regexp.MustCompile(`\*\[image: [^\]]*\]\*`)
 	imgTokenRe       = regexp.MustCompile(`DOJOIMG(\d+)X`)
 )
+
+// viewImages renders the current problem's diagrams at full terminal size —
+// roughly double the pane's resolution, which is the sharpest this terminal
+// can show without a graphics protocol.
+func (m *Model) viewImages() string {
+	if m.detail == nil {
+		return ""
+	}
+	imgs := localImages(m.detail.Slug)
+	if len(imgs) == 0 {
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center,
+			styleDim.Render("no diagrams for this problem\n\nesc to close"))
+	}
+	idx := min(max(m.imageIdx, 0), len(imgs)-1)
+
+	head := fmt.Sprintf("%s  %s",
+		styleHeader.Render(fmt.Sprintf("%d. %s", m.detail.FrontendID, m.detail.Title)),
+		styleDim.Render(fmt.Sprintf("image %d/%d", idx+1, len(imgs))))
+	hint := styleDim.Render("n/p or ←/→ cycle · esc close")
+
+	art, err := ansiImage(imgs[idx], m.width-4, m.height-6)
+	if err != nil {
+		art = styleFail.Render("cannot render " + filepath.Base(imgs[idx]) + ": " + err.Error())
+	}
+	body := lipgloss.JoinVertical(lipgloss.Center, head, "", art, "", hint)
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, body)
+}
 
 func imageRoot() string {
 	home, _ := os.UserHomeDir()
@@ -79,7 +108,7 @@ func expandImageTokens(rendered, slug string, maxCols int) string {
 		if idx >= len(imgs) {
 			return styleDim.Render("[image unavailable]")
 		}
-		art, err := ansiImage(imgs[idx], maxCols)
+		art, err := ansiImage(imgs[idx], maxCols, 0)
 		if err != nil {
 			return styleDim.Render("[image: " + filepath.Base(imgs[idx]) + " — " + err.Error() + "]")
 		}
@@ -93,9 +122,11 @@ func expandImageTokens(rendered, slug string, maxCols int) string {
 }
 
 // ansiImage decodes a bitmap and renders it as ▀ half-blocks: each cell
-// carries two vertical pixels (foreground = top, background = bottom).
-// Transparency is composited over black to match a dark terminal.
-func ansiImage(path string, maxCols int) (string, error) {
+// carries two vertical pixels (foreground = top, background = bottom), which
+// is the highest fidelity a terminal without a graphics protocol can reach.
+// Resolution is bounded only by the space given, so a wider pane (or the
+// fullscreen viewer) is a genuinely sharper image.
+func ansiImage(path string, maxCols, maxRows int) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err
@@ -111,10 +142,8 @@ func ansiImage(path string, maxCols int) (string, error) {
 	if sw == 0 || sh == 0 {
 		return "", fmt.Errorf("empty image")
 	}
+
 	cols := maxCols
-	if cols > 64 {
-		cols = 64
-	}
 	if cols > sw { // never upscale: small diagrams stay crisp at native size
 		cols = sw
 	}
@@ -122,8 +151,17 @@ func ansiImage(path string, maxCols int) (string, error) {
 		cols = 4
 	}
 	rows := (sh*cols/sw + 1) / 2
+	// honour a row budget (fullscreen viewer) by shrinking width to match
+	if maxRows > 0 && rows > maxRows {
+		rows = maxRows
+		if c := rows * 2 * sw / sh; c < cols {
+			cols = max(4, c)
+		}
+	}
 
 	px := boxScale(src, cols, rows*2)
+	sharpen(px, 0.55) // area-averaging softens strokes; restore the edges
+
 	var b strings.Builder
 	for y := 0; y < rows; y++ {
 		for x := 0; x < cols; x++ {
@@ -134,6 +172,45 @@ func ansiImage(path string, maxCols int) (string, error) {
 		b.WriteString("\x1b[0m\n")
 	}
 	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+// sharpen applies an unsharp mask in place. Averaging many source pixels into
+// one cell blurs thin diagram strokes into the background; this pulls the
+// contrast back so arrows and node outlines stay readable at low resolution.
+func sharpen(px [][][3]uint8, amount float64) {
+	h := len(px)
+	if h < 3 || amount <= 0 {
+		return
+	}
+	w := len(px[0])
+	if w < 3 {
+		return
+	}
+	orig := make([][][3]uint8, h)
+	for y := range px {
+		orig[y] = append([][3]uint8(nil), px[y]...)
+	}
+	at := func(y, x, c int) float64 {
+		y = min(max(y, 0), h-1)
+		x = min(max(x, 0), w-1)
+		return float64(orig[y][x][c])
+	}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			for c := 0; c < 3; c++ {
+				// 3x3 box blur, then push away from it
+				var sum float64
+				for dy := -1; dy <= 1; dy++ {
+					for dx := -1; dx <= 1; dx++ {
+						sum += at(y+dy, x+dx, c)
+					}
+				}
+				blur := sum / 9
+				v := at(y, x, c)
+				px[y][x][c] = uint8(min(max(v+amount*(v-blur), 0), 255))
+			}
+		}
+	}
 }
 
 // boxScale downsamples with box averaging into a [h][w][3] RGB grid,

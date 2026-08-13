@@ -31,12 +31,19 @@ conversion during ingest (a regex fallback is built in).
 
 ### Images
 
-`fetch-images.py` saves each description's diagrams to
-`~/.local/share/dojo/img/<slug>/`, and the TUI draws them inline as truecolor
-Unicode half-blocks — no graphics protocol, so it works in any 24-bit terminal
-and scrolls with the text. Skip the script and descriptions simply keep their
-`[image: …]` placeholders; nothing breaks. SVGs stay as placeholders too (Go's
-stdlib decodes PNG/JPG/GIF only).
+`fetch-images.py` saves each description's diagrams at **full original
+quality** to `~/.local/share/dojo/img/<slug>/`, and the TUI draws them inline
+as truecolor Unicode half-blocks — no graphics protocol, so it works in any
+24-bit terminal and scrolls with the text.
+
+Rendered resolution is bounded only by the space available, so **press `v` for
+the fullscreen viewer** (`n`/`p` to cycle, `esc` to close) — it uses the whole
+terminal instead of the ~60%-wide detail pane, roughly 2.7× the pixels, and is
+sharp enough to read labels inside diagram nodes.
+
+Skip the script and descriptions simply keep their `[image: …]` placeholders;
+nothing breaks. SVGs stay as placeholders too (Go's stdlib decodes PNG/JPG/GIF
+only).
 
 ## Hyprland (SUPER+L → workspace 7, fullscreen)
 

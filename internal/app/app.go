@@ -122,6 +122,9 @@ type Model struct {
 
 	helpOpen bool // Shift+R cheat-sheet modal
 
+	imageOpen bool // v: fullscreen diagram viewer
+	imageIdx  int  // which of the problem's diagrams is showing
+
 	detail        *store.ProblemDetail
 	revealedHints int
 	viewport      viewport.Model
@@ -693,6 +696,33 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// fullscreen diagram viewer captures all keys while open
+	if m.imageOpen {
+		n := len(localImages(m.detail.Slug))
+		switch k {
+		case "esc", "q", "v":
+			m.imageOpen = false
+		case "n", "l", "right", "j":
+			if m.imageIdx < n-1 {
+				m.imageIdx++
+			}
+		case "p", "h", "left", "k":
+			if m.imageIdx > 0 {
+				m.imageIdx--
+			}
+		}
+		return m, nil
+	}
+	if k == "v" && m.screen == screenBrowser {
+		if p := m.selected(); p != nil && (m.detail == nil || m.detail.ID != p.ID) {
+			m.setDetail(p)
+		}
+		if m.detail != nil {
+			m.imageOpen, m.imageIdx = true, 0
+		}
+		return m, nil
+	}
+
 	// tag-browser modal captures all keys while open
 	if m.tagPicking {
 		switch k {
@@ -1162,6 +1192,7 @@ func (m *Model) viewHelp() string {
 		{"solve", []row{
 			{"i", "edit in $EDITOR — in tmux, opens its own window"},
 			{"r", "run the judge"},
+			{"v", "view diagrams fullscreen (sharpest; n/p to cycle)"},
 			{"H", "reveal next hint (lowers your SRS grade)"},
 			{"L", "cycle language: python → cpp → c"},
 		}},
@@ -1192,6 +1223,9 @@ func (m *Model) View() string {
 	}
 	if m.helpOpen {
 		return m.viewHelp()
+	}
+	if m.imageOpen {
+		return m.viewImages()
 	}
 	if m.screen == screenDashboard {
 		return m.viewDashboard()
