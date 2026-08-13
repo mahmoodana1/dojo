@@ -970,12 +970,13 @@ func (m *Model) renderDetail() {
 		if n := len(d.Hints) - m.revealedHints; n > 0 {
 			fmt.Fprintf(&b, "\n_%d hint(s) available — press H to reveal (counts toward SRS grading)._\n", n)
 		}
-		out = b.String()
+		out = tokenizeImages(b.String(), d.Slug)
 		if m.renderer != nil {
 			if rendered, err := m.renderer.Render(out); err == nil {
 				out = rendered
 			}
 		}
+		out = expandImageTokens(out, d.Slug, m.detailWidth()-8)
 		if m.revealedHints == 0 && d.Description != "" {
 			m.renderCache[d.ID] = out
 		}

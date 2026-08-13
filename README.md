@@ -16,12 +16,27 @@ go mod tidy && go build -o dojo ./cmd/dojo
 python3 scripts/ingest.py --limit 300     # start with 300 problems tonight
 python3 scripts/ingest.py                 # finish the rest whenever
 
-# 3. Run it
+# 3. Curated study lists (Blind 75, NeetCode 150, Grind 75, topic ladders…)
+python3 scripts/seed-lists.py
+
+# 4. Problem diagrams, for offline inline rendering (~1.4k images, ~12 min)
+python3 scripts/fetch-images.py
+
+# 5. Run it
 ./dojo
 ```
 
 Optional: `pip install markdownify` gives higher-fidelity HTML→markdown
 conversion during ingest (a regex fallback is built in).
+
+### Images
+
+`fetch-images.py` saves each description's diagrams to
+`~/.local/share/dojo/img/<slug>/`, and the TUI draws them inline as truecolor
+Unicode half-blocks — no graphics protocol, so it works in any 24-bit terminal
+and scrolls with the text. Skip the script and descriptions simply keep their
+`[image: …]` placeholders; nothing breaks. SVGs stay as placeholders too (Go's
+stdlib decodes PNG/JPG/GIF only).
 
 ## Hyprland (SUPER+L → workspace 7, fullscreen)
 
