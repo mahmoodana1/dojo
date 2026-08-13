@@ -29,6 +29,28 @@ python3 scripts/fetch-images.py
 Optional: `pip install markdownify` gives higher-fidelity HTML→markdown
 conversion during ingest (a regex fallback is built in).
 
+### Typed judging
+
+95% of free problems (3088/3246) generate the **exact LeetCode Python
+signature** — `class Solution` with the real method name and type hints, or
+the real class for design problems. The judge builds true arguments
+(including `TreeNode`/`ListNode` from LeetCode's flat arrays), calls your
+method, and deep-compares the return value. No I/O parsing.
+
+`void` returns compare the mutated first argument; design problems
+(LRU Cache, Trie, Min Stack…) replay LeetCode's recorded call sequence.
+
+The rest fall back to a raw-stdin stub: SQL and shell problems (no Python
+signature exists on LeetCode either), two exotic types (`NestedInteger`,
+`DataFrame`), and ~28 whose examples resist parsing.
+
+After editing `scripts/ingest.py`, rebuild cases offline — no network, and
+your solve history is untouched:
+
+```bash
+python3 scripts/ingest.py --reconvert
+```
+
 ### Images
 
 `fetch-images.py` saves each description's diagrams at **full original

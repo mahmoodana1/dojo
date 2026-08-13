@@ -16,7 +16,7 @@ func TestRunAllPython(t *testing.T) {
 	rep := RunAll(context.Background(), Registry["python"], src, []Case{
 		{Input: "abc", Expected: "ABC"},
 		{Input: "dojo", Expected: "WRONG"},
-	}, "")
+	}, nil)
 	if rep.CompileErr != "" {
 		t.Fatalf("unexpected compile error: %s", rep.CompileErr)
 	}
@@ -37,7 +37,7 @@ int main(void){int a,b;scanf("%d %d",&a,&b);printf("%d\n",a+b);return 0;}`
 	}
 	rep := RunAll(context.Background(), Registry["c"], src, []Case{
 		{Input: "2 3", Expected: "5"},
-	}, "")
+	}, nil)
 	if rep.CompileErr != "" {
 		t.Fatalf("compile error: %s", rep.CompileErr)
 	}

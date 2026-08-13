@@ -187,8 +187,14 @@ def html_to_md(s: str) -> str:
 # Best-effort: pull Input/Output pairs out of the "Example N:" blocks so the
 # judge has seed cases. Inputs keep LeetCode's `name = value` form; the
 # solution template's parse step deals with that per problem.
+# LeetCode ships two description formats: older problems put examples in a
+# <pre> block ("Input: … / Output: …"), newer ones use bold labels
+# ("**Input:** … / **Output:** …"). The bold markers must be consumed as part
+# of the label, not treated as a terminator, or every newer problem yields an
+# empty Output and loses all of its cases.
 EXAMPLE_RE = re.compile(
-    r"Input:?\s*(?P<inp>.*?)\s*Output:?\s*(?P<out>.*?)\s*(?:```|\*\*|Explanation|Example|Constraints|$)",
+    r"\*{0,2}Input:?\*{0,2}\s*(?P<inp>.*?)\s*\*{0,2}Output:?\*{0,2}\s*(?P<out>.*?)\s*"
+    r"(?=\n\s*\n|```|\*{0,2}Explanation|\*{0,2}Example\b|\*{0,2}Constraints|$)",
     re.S,
 )
 
@@ -202,35 +208,72 @@ def parse_examples(description_md: str) -> list[tuple[str, str]]:
     return cases
 
 
-# --- typed judging (v2) -------------------------------------------------------
+# --- typed judging ------------------------------------------------------------
 # A problem qualifies for signature-aware judging when its metaData describes
-# a plain-typed method (no ListNode/TreeNode/design-class shapes — phase 2)
-# and its exampleTestcases blob parses into one JSON value per parameter.
+# a method dojo can build real arguments for, and its exampleTestcases blob
+# parses into one JSON value per parameter.
+#
+# Scalars pass through as JSON. TreeNode/ListNode arrive as LeetCode's flat
+# array encoding and are inflated into real objects by typed_driver.py.
+# Design classes ("classname" in metaData, e.g. LRUCache) still need a
+# command/argument replay harness and stay on raw I/O.
 
-PLAIN_TYPES = {"integer", "long", "string", "boolean", "double", "char"}
+PLAIN_TYPES = {"integer", "long", "string", "boolean", "double",
+               "char", "character"}
+STRUCT_TYPES = {"TreeNode", "ListNode"}
 
 
-def is_plain_type(t: str) -> bool:
+def is_supported_type(t: str, allow_void: bool = False) -> bool:
     t = t.strip()
+    if allow_void and t == "void":
+        return True
     while t.endswith("[]"):
         t = t[:-2]
     if t.startswith("list<") and t.endswith(">"):
-        return is_plain_type(t[5:-1])
-    return t in PLAIN_TYPES
+        return is_supported_type(t[5:-1])
+    return t in PLAIN_TYPES or t in STRUCT_TYPES
+
+
+def design_signature(meta: dict):
+    """Design problems ("systemdesign"): LeetCode records the call sequence as
+    two arrays — operation names, then argument lists — so a case is 2 lines.
+    Returns (classname, 2) when every member signature is supported."""
+    methods = meta.get("methods") or []
+    if not methods:
+        return None
+    types = []
+    for p in (meta.get("constructor") or {}).get("params") or []:
+        types.append((p.get("type", ""), False))
+    for m in methods:
+        for p in m.get("params") or []:
+            types.append((p.get("type", ""), False))
+        types.append(((m.get("return") or {}).get("type", ""), True))
+    if not all(is_supported_type(t, allow_void=v) for t, v in types):
+        return None
+    return meta["classname"], 2
 
 
 def typed_signature(meta_json: str | None):
-    """Return (method_name, param_count) if typed judging applies, else None."""
+    """Return (name, lines_per_case) if typed judging applies, else None."""
     try:
         meta = json.loads(meta_json or "")
     except (TypeError, json.JSONDecodeError):
         return None
-    if not isinstance(meta, dict) or "classname" in meta or not meta.get("name"):
+    if not isinstance(meta, dict):
+        return None
+    if meta.get("classname"):
+        return design_signature(meta)
+    if not meta.get("name"):
         return None
     params = meta.get("params") or []
-    types = [p.get("type", "") for p in params]
-    types.append((meta.get("return") or {}).get("type", ""))
-    if not params or not all(is_plain_type(t) for t in types):
+    if not params:
+        return None
+    if not all(is_supported_type(p.get("type", "")) for p in params):
+        return None
+    # void return = the answer is a mutated argument; the driver serialises
+    # the first parameter back out after the call.
+    if not is_supported_type((meta.get("return") or {}).get("type", ""),
+                             allow_void=True):
         return None
     return meta["name"], len(params)
 

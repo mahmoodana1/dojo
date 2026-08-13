@@ -367,10 +367,7 @@ func (m *Model) runTests() tea.Cmd {
 		return nil
 	}
 	lang := runner.Registry[runner.Order[m.lang]]
-	method := ""
-	if tm := m.typedMeta(d.ID); tm != nil {
-		method = tm.Name
-	}
+	tm := m.typedMeta(d.ID)
 	m.running = true
 	return func() tea.Msg {
 		cases, err := m.st.TestCases(d.ID)
@@ -385,7 +382,7 @@ func (m *Model) runTests() tea.Cmd {
 		if _, err := os.Stat(src); err != nil {
 			return errMsg{fmt.Errorf("no solution file yet — press i to start one")}
 		}
-		rep := runner.RunAll(context.Background(), lang, src, cases, method)
+		rep := runner.RunAll(context.Background(), lang, src, cases, tm)
 		return reportMsg(rep)
 	}
 }

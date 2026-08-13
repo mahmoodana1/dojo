@@ -58,25 +58,45 @@ type Case struct {
 	ExpectedJSON string
 }
 
-// Meta is the parsed LeetCode metaData: the function signature.
-type Meta struct {
-	Name   string `json:"name"`
-	Params []struct {
-		Name string `json:"name"`
-		Type string `json:"type"`
-	} `json:"params"`
+// Param is one entry of a LeetCode signature.
+type Param struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+// Method is one member of a design-class problem (LRUCache, MinStack…).
+type Method struct {
+	Name   string  `json:"name"`
+	Params []Param `json:"params"`
 	Return struct {
 		Type string `json:"type"`
 	} `json:"return"`
 }
+
+// Meta is the parsed LeetCode metaData. It describes either a single method
+// (ClassName empty) or a design class to be instantiated and driven by a
+// recorded sequence of calls.
+type Meta struct {
+	Name        string   `json:"name,omitempty"`
+	ClassName   string   `json:"classname,omitempty"`
+	Constructor *Method  `json:"constructor,omitempty"`
+	Methods     []Method `json:"methods,omitempty"`
+	Params      []Param  `json:"params,omitempty"`
+	Return      struct {
+		Type string `json:"type"`
+	} `json:"return"`
+}
+
+// IsDesign reports whether this is a class-based ("system design") problem.
+func (m *Meta) IsDesign() bool { return m.ClassName != "" }
 
 func ParseMeta(metaJSON string) (*Meta, error) {
 	var m Meta
 	if err := json.Unmarshal([]byte(metaJSON), &m); err != nil {
 		return nil, err
 	}
-	if m.Name == "" {
-		return nil, fmt.Errorf("metaData has no method name")
+	if m.Name == "" && m.ClassName == "" {
+		return nil, fmt.Errorf("metaData has no method or class name")
 	}
 	return &m, nil
 }
@@ -162,10 +182,11 @@ func jsonEqualStr(a, b string) bool {
 	return jsonEqual(va, vb)
 }
 
-// RunAll compiles (if needed) and judges src against every case. method is
-// the LeetCode method name; when set, typed cases run through the typed
-// driver (python only in phase 1) instead of raw stdio.
-func RunAll(ctx context.Context, lang Language, src string, cases []Case, method string) Report {
+// RunAll compiles (if needed) and judges src against every case. meta is the
+// parsed LeetCode signature; when set, typed cases run through the typed
+// driver (python only) instead of raw stdio, so the solution can be written
+// against the real signature.
+func RunAll(ctx context.Context, lang Language, src string, cases []Case, meta *Meta) Report {
 	var rep Report
 	rep.Total = len(cases)
 
@@ -182,13 +203,16 @@ func RunAll(ctx context.Context, lang Language, src string, cases []Case, method
 		defer os.Remove(bin)
 	}
 
-	var driverPath string
-	if method != "" && lang.Name == "python" {
-		driverPath = filepath.Join(os.TempDir(), fmt.Sprintf("dojo-driver-%d.py", time.Now().UnixNano()))
-		if err := os.WriteFile(driverPath, []byte(typedDriver), 0o644); err == nil {
-			defer os.Remove(driverPath)
-		} else {
-			driverPath = "" // fall back to raw judging
+	var driverPath, metaJSON string
+	if meta != nil && (meta.Name != "" || meta.IsDesign()) && lang.Name == "python" {
+		if b, err := json.Marshal(meta); err == nil {
+			metaJSON = string(b)
+			driverPath = filepath.Join(os.TempDir(), fmt.Sprintf("dojo-driver-%d.py", time.Now().UnixNano()))
+			if err := os.WriteFile(driverPath, []byte(typedDriver), 0o644); err == nil {
+				defer os.Remove(driverPath)
+			} else {
+				driverPath = "" // fall back to raw judging
+			}
 		}
 	}
 
@@ -199,7 +223,7 @@ func RunAll(ctx context.Context, lang Language, src string, cases []Case, method
 		cctx, cancel := context.WithTimeout(ctx, perCaseTimeout)
 		var cmd *exec.Cmd
 		if typed {
-			cmd = exec.CommandContext(cctx, "python3", driverPath, src, method)
+			cmd = exec.CommandContext(cctx, "python3", driverPath, src, metaJSON)
 			cmd.Stdin = strings.NewReader(tc.ArgsJSON)
 		} else {
 			cmd = exec.CommandContext(cctx, runArgs[0], runArgs[1:]...)
@@ -247,10 +271,10 @@ type SolutionMeta struct {
 }
 
 func pyType(t string) string {
-	switch t {
+	switch strings.TrimSpace(t) {
 	case "integer", "long":
 		return "int"
-	case "string", "char":
+	case "string", "char", "character":
 		return "str"
 	case "boolean":
 		return "bool"
@@ -258,6 +282,10 @@ func pyType(t string) string {
 		return "float"
 	case "void":
 		return "None"
+	case "TreeNode":
+		return "Optional[TreeNode]"
+	case "ListNode":
+		return "Optional[ListNode]"
 	}
 	if inner, ok := strings.CutSuffix(t, "[]"); ok {
 		return "List[" + pyType(inner) + "]"
@@ -268,11 +296,117 @@ func pyType(t string) string {
 	return "object"
 }
 
+// usesType reports whether the signature mentions a node type anywhere,
+// including inside list<…> and […] wrappers.
+func usesType(m *Meta, name string) bool {
+	if strings.Contains(m.Return.Type, name) {
+		return true
+	}
+	for _, p := range m.Params {
+		if strings.Contains(p.Type, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// nodeClassComments mirrors the commented-out definitions LeetCode puts at
+// the top of its Python stubs. The judge injects the real classes at run
+// time, so these stay comments — exactly as on the site.
+func nodeClassComments(m *Meta) string {
+	var b strings.Builder
+	if usesType(m, "ListNode") {
+		b.WriteString(`# Definition for singly-linked list.
+# class ListNode:
+#     def __init__(self, val=0, next=None):
+#         self.val = val
+#         self.next = next
+
+`)
+	}
+	if usesType(m, "TreeNode") {
+		b.WriteString(`# Definition for a binary tree node.
+# class TreeNode:
+#     def __init__(self, val=0, left=None, right=None):
+#         self.val = val
+#         self.left = left
+#         self.right = right
+
+`)
+	}
+	return b.String()
+}
+
+// designPythonStub renders the class skeleton LeetCode shows for
+// "system design" problems, including the trailing usage comment.
+func designPythonStub(sm SolutionMeta, m *Meta) string {
+	sig := func(name string, ps []Param, ret string) string {
+		args := []string{"self"}
+		for _, p := range ps {
+			args = append(args, fmt.Sprintf("%s: %s", p.Name, pyType(p.Type)))
+		}
+		return fmt.Sprintf("    def %s(%s) -> %s:\n        ...\n",
+			name, strings.Join(args, ", "), ret)
+	}
+
+	var body strings.Builder
+	var ctorParams []Param
+	if m.Constructor != nil {
+		ctorParams = m.Constructor.Params
+	}
+	body.WriteString(sig("__init__", ctorParams, "None"))
+	for _, meth := range m.Methods {
+		body.WriteString("\n" + sig(meth.Name, meth.Params, pyType(meth.Return.Type)))
+	}
+
+	// usage comment, exactly as LeetCode renders it
+	var usage strings.Builder
+	names := make([]string, 0, len(ctorParams))
+	for _, p := range ctorParams {
+		names = append(names, p.Name)
+	}
+	fmt.Fprintf(&usage, "\n# Your %s object will be instantiated and called as such:\n", m.ClassName)
+	fmt.Fprintf(&usage, "# obj = %s(%s)\n", m.ClassName, strings.Join(names, ", "))
+	for i, meth := range m.Methods {
+		ns := make([]string, 0, len(meth.Params))
+		for _, p := range meth.Params {
+			ns = append(ns, p.Name)
+		}
+		call := fmt.Sprintf("obj.%s(%s)", meth.Name, strings.Join(ns, ", "))
+		if meth.Return.Type == "void" || meth.Return.Type == "" {
+			fmt.Fprintf(&usage, "# %s\n", call)
+		} else {
+			fmt.Fprintf(&usage, "# param_%d = %s\n", i+1, call)
+		}
+	}
+
+	return fmt.Sprintf(`# %d. %s  [%s]
+# https://leetcode.com/problems/%s/
+#
+# dojo typed mode: implement the class below — the judge replays LeetCode's
+# recorded call sequence and compares the returned values. No I/O code needed.
+from typing import List, Optional
+
+
+class %s:
+
+%s%s`, sm.FrontendID, sm.Title, sm.Difficulty, sm.Slug,
+		m.ClassName, body.String(), usage.String())
+}
+
 // typedPythonStub renders a LeetCode-identical class Solution skeleton.
 func typedPythonStub(sm SolutionMeta, m *Meta) string {
+	if m.IsDesign() {
+		return designPythonStub(sm, m)
+	}
 	params := []string{"self"}
 	for _, p := range m.Params {
 		params = append(params, fmt.Sprintf("%s: %s", p.Name, pyType(p.Type)))
+	}
+	body := "        ..."
+	if m.Return.Type == "void" {
+		body = "        \"\"\"Do not return anything, modify " +
+			m.Params[0].Name + " in-place instead.\"\"\""
 	}
 	return fmt.Sprintf(`# %d. %s  [%s]
 # https://leetcode.com/problems/%s/
@@ -281,12 +415,13 @@ func typedPythonStub(sm SolutionMeta, m *Meta) string {
 # typed arguments and deep-compares your return value. No I/O code needed.
 from typing import List, Optional
 
-
+%s
 class Solution:
     def %s(%s) -> %s:
-        ...
+%s
 `, sm.FrontendID, sm.Title, sm.Difficulty, sm.Slug,
-		m.Name, strings.Join(params, ", "), pyType(m.Return.Type))
+		nodeClassComments(m),
+		m.Name, strings.Join(params, ", "), pyType(m.Return.Type), body)
 }
 
 // EnsureSolutionFile creates <root>/<frontendID>-<slug>/solution<ext> if it
