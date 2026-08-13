@@ -428,26 +428,73 @@ class Solution:
 // does not exist and returns its path. With typed metadata and a python
 // target it generates a LeetCode-identical signature stub; otherwise the
 // language's raw-mode template.
-func EnsureSolutionFile(root string, meta SolutionMeta, lang Language, typed *Meta) (string, error) {
+// It also returns a note for the UI when an existing file had to be migrated.
+func EnsureSolutionFile(root string, meta SolutionMeta, lang Language, typed *Meta) (string, string, error) {
 	dir := filepath.Join(root, fmt.Sprintf("%04d-%s", meta.FrontendID, meta.Slug))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
+		return "", "", err
 	}
 	path := filepath.Join(dir, "solution"+lang.Ext)
 	if _, err := os.Stat(path); err == nil {
-		return path, nil // never clobber existing work
+		note, err := migrateStaleStub(path, meta, lang, typed)
+		return path, note, err
 	}
 	if typed != nil && lang.Name == "python" {
-		return path, os.WriteFile(path, []byte(typedPythonStub(meta, typed)), 0o644)
+		return path, "", os.WriteFile(path, []byte(typedPythonStub(meta, typed)), 0o644)
 	}
 	tpl, err := template.ParseFS(templates, "templates/"+lang.Template)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	f, err := os.Create(path)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer f.Close()
-	return path, tpl.Execute(f, meta)
+	return path, "", tpl.Execute(f, meta)
+}
+
+// isRawModeStub reports whether src is dojo's raw-stdin scaffold rather than
+// a typed solution. Such a file cannot pass once the problem judges typed —
+// the driver calls Solution().<method>(), which the raw stub never defines.
+func isRawModeStub(src string) bool {
+	return strings.Contains(src, "def solve(data: str) -> str:") &&
+		!strings.Contains(src, "class Solution")
+}
+
+// rawStubIsPristine reports whether the file still holds the generated body,
+// i.e. nothing has been written into it yet.
+func rawStubIsPristine(src string) bool {
+	return strings.Contains(src, "# your solution here") &&
+		strings.Contains(src, "return data")
+}
+
+// migrateStaleStub upgrades a solution file written before the problem gained
+// typed judging. Pristine scaffolds are replaced outright; anything with work
+// in it is copied to solution.rawmode-backup<ext> first, so nothing is lost.
+// Returns a message for the UI when something changed.
+func migrateStaleStub(path string, meta SolutionMeta, lang Language, typed *Meta) (string, error) {
+	if typed == nil || lang.Name != "python" {
+		return "", nil
+	}
+	b, err := os.ReadFile(path)
+	if err != nil || !isRawModeStub(string(b)) {
+		return "", nil // already typed, or unreadable: leave it alone
+	}
+
+	note := ""
+	if !rawStubIsPristine(string(b)) {
+		backup := strings.TrimSuffix(path, lang.Ext) + ".rawmode-backup" + lang.Ext
+		if err := os.WriteFile(backup, b, 0o644); err != nil {
+			return "", err
+		}
+		note = "old raw-mode file saved as " + filepath.Base(backup)
+	}
+	if err := os.WriteFile(path, []byte(typedPythonStub(meta, typed)), 0o644); err != nil {
+		return "", err
+	}
+	if note == "" {
+		note = "regenerated stub with the real LeetCode signature"
+	}
+	return note, nil
 }

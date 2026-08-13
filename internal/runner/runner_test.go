@@ -49,14 +49,14 @@ int main(void){int a,b;scanf("%d %d",&a,&b);printf("%d\n",a+b);return 0;}`
 func TestEnsureSolutionFileDoesNotClobber(t *testing.T) {
 	root := t.TempDir()
 	meta := SolutionMeta{FrontendID: 1, Title: "Two Sum", Slug: "two-sum", Difficulty: "Easy"}
-	p1, err := EnsureSolutionFile(root, meta, Registry["python"], nil)
+	p1, _, err := EnsureSolutionFile(root, meta, Registry["python"], nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(p1, []byte("my work"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	p2, err := EnsureSolutionFile(root, meta, Registry["python"], nil)
+	p2, _, err := EnsureSolutionFile(root, meta, Registry["python"], nil)
 	if err != nil {
 		t.Fatal(err)
 	}

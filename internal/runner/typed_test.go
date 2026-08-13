@@ -148,6 +148,104 @@ func TestTypedCharacterGrid(t *testing.T) {
 	}
 }
 
+// A solution file written before the problem gained typed judging is a raw
+// stdin scaffold, which can never pass the typed driver. Opening it must
+// migrate it — without losing anything the user wrote.
+func TestMigrateStaleRawStub(t *testing.T) {
+	const rawStub = `# 938. Range Sum of BST  [Easy]
+#
+# dojo judges by I/O: read the raw case text from stdin, print the answer.
+import sys
+
+
+def solve(data: str) -> str:
+    # your solution here
+    return data
+
+
+if __name__ == "__main__":
+    sys.stdout.write(str(solve(sys.stdin.read().strip())))
+`
+	const treeMeta = `{"name":"rangeSumBST","params":[{"name":"root","type":"TreeNode"},` +
+		`{"name":"low","type":"integer"},{"name":"high","type":"integer"}],` +
+		`"return":{"type":"integer"}}`
+	sm := SolutionMeta{FrontendID: 938, Title: "Range Sum of BST",
+		Slug: "range-sum-of-bst", Difficulty: "Easy"}
+	py := Registry["python"]
+
+	t.Run("pristine scaffold is replaced outright", func(t *testing.T) {
+		root := t.TempDir()
+		dir := filepath.Join(root, "0938-range-sum-of-bst")
+		os.MkdirAll(dir, 0o755)
+		path := filepath.Join(dir, "solution.py")
+		os.WriteFile(path, []byte(rawStub), 0o644)
+
+		_, note, err := EnsureSolutionFile(root, sm, py, mustMeta(t, treeMeta))
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := os.ReadFile(path)
+		if !strings.Contains(string(b), "def rangeSumBST(self, root: Optional[TreeNode]") {
+			t.Fatalf("stub was not migrated:\n%s", b)
+		}
+		if note == "" {
+			t.Error("migration should report a note for the status bar")
+		}
+		if _, err := os.Stat(filepath.Join(dir, "solution.rawmode-backup.py")); err == nil {
+			t.Error("a pristine scaffold needs no backup")
+		}
+	})
+
+	t.Run("edited file is backed up, never lost", func(t *testing.T) {
+		root := t.TempDir()
+		dir := filepath.Join(root, "0938-range-sum-of-bst")
+		os.MkdirAll(dir, 0o755)
+		path := filepath.Join(dir, "solution.py")
+		edited := strings.Replace(rawStub, "    return data", `    return "99"`, 1)
+		os.WriteFile(path, []byte(edited), 0o644)
+
+		_, note, err := EnsureSolutionFile(root, sm, py, mustMeta(t, treeMeta))
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := os.ReadFile(path)
+		if !strings.Contains(string(b), "def rangeSumBST(self, root: Optional[TreeNode]") {
+			t.Fatalf("stub was not migrated:\n%s", b)
+		}
+		backup, err := os.ReadFile(filepath.Join(dir, "solution.rawmode-backup.py"))
+		if err != nil {
+			t.Fatalf("edited file must be backed up: %v", err)
+		}
+		if string(backup) != edited {
+			t.Error("backup does not match the original byte-for-byte")
+		}
+		if !strings.Contains(note, "rawmode-backup") {
+			t.Errorf("note should name the backup, got %q", note)
+		}
+	})
+
+	t.Run("real typed work is left completely alone", func(t *testing.T) {
+		root := t.TempDir()
+		dir := filepath.Join(root, "0938-range-sum-of-bst")
+		os.MkdirAll(dir, 0o755)
+		path := filepath.Join(dir, "solution.py")
+		work := "class Solution:\n    def rangeSumBST(self, root, low, high):\n        return 42\n"
+		os.WriteFile(path, []byte(work), 0o644)
+
+		_, note, err := EnsureSolutionFile(root, sm, py, mustMeta(t, treeMeta))
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := os.ReadFile(path)
+		if string(b) != work {
+			t.Fatalf("existing typed solution must never be touched:\n%s", b)
+		}
+		if note != "" {
+			t.Errorf("no migration expected, got note %q", note)
+		}
+	})
+}
+
 const lruMeta = `{"classname":"LRUCache","constructor":{"params":[{"type":"integer","name":"capacity"}]},` +
 	`"methods":[{"name":"get","params":[{"type":"integer","name":"key"}],"return":{"type":"integer"}},` +
 	`{"name":"put","params":[{"type":"integer","name":"key"},{"type":"integer","name":"value"}],` +

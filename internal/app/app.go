@@ -314,11 +314,14 @@ func (m *Model) openEditor() tea.Cmd {
 		return nil
 	}
 	lang := runner.Registry[runner.Order[m.lang]]
-	path, err := runner.EnsureSolutionFile(solutionsRoot(), runner.SolutionMeta{
+	path, note, err := runner.EnsureSolutionFile(solutionsRoot(), runner.SolutionMeta{
 		FrontendID: d.FrontendID, Title: d.Title, Slug: d.Slug, Difficulty: d.Difficulty,
 	}, lang, m.typedMeta(d.ID))
 	if err != nil {
 		return func() tea.Msg { return errMsg{err} }
+	}
+	if note != "" {
+		m.status = note
 	}
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
