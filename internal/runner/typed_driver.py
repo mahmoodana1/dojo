@@ -9,6 +9,7 @@
 import importlib.util
 import json
 import sys
+import typing
 
 
 class ListNode:
@@ -159,6 +160,12 @@ def main():
     # TreeNode/ListNode (including in annotations) without defining them.
     mod.ListNode = ListNode
     mod.TreeNode = TreeNode
+    # LeetCode's editor stub is written against a preloaded environment: its
+    # `class Solution` annotations say List[int] with no import in sight. dojo
+    # writes that stub verbatim so it pastes back unchanged, so the names have
+    # to exist here instead.
+    for name in ("List", "Optional", "Dict", "Set", "Tuple", "Any", "Union", "Deque"):
+        setattr(mod, name, getattr(typing, name, None))
     spec.loader.exec_module(mod)
 
     raw = json.loads(sys.stdin.read())

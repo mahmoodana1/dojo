@@ -10,6 +10,11 @@ import (
 
 const twoSumMeta = `{"name":"twoSum","params":[{"name":"nums","type":"integer[]"},{"name":"target","type":"integer"}],"return":{"type":"integer[]"}}`
 
+// typedInfo is a problem whose examples parsed into typed arguments.
+func typedInfo(metaJSON string) CodeInfo {
+	return CodeInfo{JudgeMode: "typed", MetaJSON: metaJSON}
+}
+
 func mustMeta(t *testing.T, s string) *Meta {
 	t.Helper()
 	m, err := ParseMeta(s)
@@ -26,7 +31,7 @@ func runTyped(t *testing.T, meta, code string, cases []Case) Report {
 	if err := os.WriteFile(src, []byte(code), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return RunAll(context.Background(), Registry["python"], src, cases, mustMeta(t, meta))
+	return RunAll(context.Background(), Registry["python"], src, cases, typedInfo(meta))
 }
 
 // 938. Range Sum of BST — the problem that exposed the missing TreeNode
@@ -180,7 +185,7 @@ if __name__ == "__main__":
 		path := filepath.Join(dir, "solution.py")
 		os.WriteFile(path, []byte(rawStub), 0o644)
 
-		_, note, err := EnsureSolutionFile(root, sm, py, mustMeta(t, treeMeta))
+		_, note, err := EnsureSolutionFile(root, sm, py, typedInfo(treeMeta))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -204,7 +209,7 @@ if __name__ == "__main__":
 		edited := strings.Replace(rawStub, "    return data", `    return "99"`, 1)
 		os.WriteFile(path, []byte(edited), 0o644)
 
-		_, note, err := EnsureSolutionFile(root, sm, py, mustMeta(t, treeMeta))
+		_, note, err := EnsureSolutionFile(root, sm, py, typedInfo(treeMeta))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -232,7 +237,7 @@ if __name__ == "__main__":
 		work := "class Solution:\n    def rangeSumBST(self, root, low, high):\n        return 42\n"
 		os.WriteFile(path, []byte(work), 0o644)
 
-		_, note, err := EnsureSolutionFile(root, sm, py, mustMeta(t, treeMeta))
+		_, note, err := EnsureSolutionFile(root, sm, py, typedInfo(treeMeta))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -368,7 +373,7 @@ func TestTypedJudgingEndToEnd(t *testing.T) {
 		{ArgsJSON: `[[3,2,4], 6]`, ExpectedJSON: `[1, 2]`},
 		{ArgsJSON: `[[3,3], 6]`, ExpectedJSON: `[0, 1]`},
 		{ArgsJSON: `[[1,2], 99]`, ExpectedJSON: `[0, 1]`}, // returns null -> fail
-	}, mustMeta(t, twoSumMeta))
+	}, typedInfo(twoSumMeta))
 	if rep.Passed != 3 || rep.Total != 4 {
 		t.Fatalf("want 3/4 passed, got %d/%d (%+v)", rep.Passed, rep.Total, rep.Results)
 	}

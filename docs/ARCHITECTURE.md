@@ -41,8 +41,13 @@ judges (source file, cases) pairs. `srs` is pure math.
    title, slug, difficulty, acceptance rate, paid flag, topic tags. ~30
    requests for the full ~3,300-problem set.
 2. **Details** — per-slug `question` query: content (HTML → markdown), hints,
-   `metaData` (function signatures, kept for future codegen),
-   `exampleTestcases`, similar problems. Skips paid-only.
+   `metaData` (function signatures), `codeSnippets` (the editor panel itself,
+   per language), `exampleTestcases`, similar problems. Skips paid-only.
+
+`--snippets` is a third, cheap pass that backfills `codeSnippets` alone, for
+databases seeded before dojo stored them. Snippets are what make a stub
+identical to the site's: `metaData` describes an algorithm signature well, but
+says nothing about a shell problem beyond `{"shell": true}`.
 
 Politeness and robustness: ~2 req/s with jitter, per-problem commits, resume
 by re-running (rows with `description_md IS NULL` are the work queue), errors
@@ -82,24 +87,40 @@ Vim grammar: `j/k` (list or scroll, focus-dependent), `h/l` panel focus,
 `D` dashboard, `q` quit.
 
 **Editor handoff:** `i` materialises
-`~/dojo-solutions/<id>-<slug>/solution.<ext>` from a language template (never
-clobbers existing work), suspends the TUI via `tea.ExecProcess($EDITOR file)`,
-and on editor exit the judge runs automatically — write, `:wq`, verdict. No
-context switch.
+`~/dojo-solutions/<id>-<slug>/solution.<ext>` (never clobbers existing work),
+suspends the TUI via `tea.ExecProcess($EDITOR file)`, and on editor exit the
+judge runs automatically — write, `:wq`, verdict. No context switch.
+
+The file's contents are LeetCode's `codeSnippets` entry for the chosen
+language, verbatim, under a two-line comment header — so the finished solution
+pastes into the site unchanged. dojo only synthesises a stub when no snippet
+has been fetched: from `meta_json` for python, else the language's I/O
+template. `L` cycles the languages LeetCode actually offers for that problem
+(`CodeInfo.Languages`), so a database problem shows MySQL and Pandas, not C.
 
 ## 4. Local judge
 
-I/O contract: solution reads the case's `input` from stdin, prints its answer;
-stdout is compared to `expected` after per-line whitespace normalisation.
-This is what makes the runner language-agnostic — **a language is one
-`Registry` entry** (optional compile argv + run argv with `{{src}}`/`{{bin}}`
-placeholders) **plus one template file**. Rust support ≈ 5 lines + a template.
+`CodeInfo.Plan` picks the judge from what was written into the file — a stub
+generated from a LeetCode snippet is never I/O-shaped, so it must never reach
+the stdio judge:
 
-Per-case: 5 s timeout (`context.WithTimeout` kills the process), wall-time in
-ms, captured stderr, compile errors reported as their own verdict. Trade-off,
-made consciously: I/O judging means adapting LeetCode's `name = value` inputs
-in your parse step; v2 uses the stored `meta_json` to generate
-signature-aware harnesses per language (LeetCode-identical ergonomics).
+| Plan | Applies to | Mechanism |
+|---|---|---|
+| `JudgeTyped` | algorithm problems with parsed example arguments | `typed_driver.py` builds real arguments, deep-compares the return |
+| `JudgeSQL` | database problems | `sql_driver.py` replays the metaData DDL + example rows into in-memory SQLite, runs your query |
+| `JudgePandas` | pandas tabs | `pandas_driver.py` builds the declared frames, calls your function by parameter name |
+| `JudgeRaw` | C/C++ and untyped fallbacks | stdin → stdout, whitespace-normalised compare |
+| `JudgeNone` | shell, javascript, custom-checker problems | reports why, records no attempt |
+
+Result sets compare as tables (`table.go`): same column names in any order,
+rows as a multiset, numbers within 1e-6 — the latitude LeetCode allows. The
+scratch database is SQLite, so MySQL-only syntax surfaces as an error rather
+than a wrong answer.
+
+A language is still one `Registry` entry (optional compile argv + run argv
+with `{{src}}`/`{{bin}}` placeholders) plus, for I/O languages, one template
+file. Per-case: 5 s timeout (`context.WithTimeout` kills the process),
+wall-time in ms, captured stderr, compile errors as their own verdict.
 
 ## 5. Hyprland integration
 

@@ -136,7 +136,11 @@ type Model struct {
 	renderCache map[int64]string
 	previewSeq  int
 
-	lang      int // index into runner.Order
+	// languages this problem offers, mirroring LeetCode's own tabs: algorithm
+	// problems get python/cpp/c, database problems mysql/pandas, shell bash.
+	langs     []string
+	lang      int // index into langs
+	code      runner.CodeInfo
 	report    *runner.Report
 	running   bool
 	editStart time.Time
@@ -291,8 +295,45 @@ func (m *Model) setDetail(p *store.Problem) {
 		Hints: c.Hints, Notes: c.Notes}
 	m.revealedHints = 0
 	m.report = nil
+	m.setLanguages(p.ID)
 	m.renderDetail()
 	m.viewport.GotoTop()
+}
+
+// setLanguages loads the problem's code info and restricts the language
+// cycle to the tabs LeetCode offers for it, keeping the current language
+// selected when the new problem also offers it.
+func (m *Model) setLanguages(problemID int64) {
+	info, err := m.st.CodeInfo(problemID)
+	if err != nil {
+		info = runner.CodeInfo{}
+	}
+	prev := m.current()
+	m.code = info
+	m.langs = info.Languages()
+	m.lang = 0
+	for i, name := range m.langs {
+		if name == prev {
+			m.lang = i
+		}
+	}
+}
+
+// current is the selected language name; "" before any problem is opened.
+func (m *Model) current() string {
+	if m.lang < len(m.langs) {
+		return m.langs[m.lang]
+	}
+	return ""
+}
+
+// language is the selected Language, defaulting to python for the status bar
+// before a problem has been opened.
+func (m *Model) language() runner.Language {
+	if name := m.current(); name != "" {
+		return runner.Registry[name]
+	}
+	return runner.Registry["python"]
 }
 
 // schedulePreview debounces cursor movement: the detail pane follows the
@@ -303,20 +344,27 @@ func (m *Model) schedulePreview() tea.Cmd {
 	return tea.Tick(120*time.Millisecond, func(time.Time) tea.Msg { return previewMsg{seq} })
 }
 
-func solutionsRoot() string {
+// SolutionsRoot is where dojo keeps one directory per attempted problem.
+// DOJO_SOLUTIONS overrides it, the way DOJO_DB overrides the database.
+func SolutionsRoot() string {
+	if root := os.Getenv("DOJO_SOLUTIONS"); root != "" {
+		return root
+	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, "dojo-solutions")
 }
+
+func solutionsRoot() string { return SolutionsRoot() }
 
 func (m *Model) openEditor() tea.Cmd {
 	d := m.detail
 	if d == nil {
 		return nil
 	}
-	lang := runner.Registry[runner.Order[m.lang]]
+	lang := m.language()
 	path, note, err := runner.EnsureSolutionFile(solutionsRoot(), runner.SolutionMeta{
 		FrontendID: d.FrontendID, Title: d.Title, Slug: d.Slug, Difficulty: d.Difficulty,
-	}, lang, m.typedMeta(d.ID))
+	}, lang, m.code)
 	if err != nil {
 		return func() tea.Msg { return errMsg{err} }
 	}
@@ -351,26 +399,18 @@ func (m *Model) openEditor() tea.Cmd {
 	return tea.ExecProcess(c, func(err error) tea.Msg { return editorDoneMsg{err} })
 }
 
-// typedMeta returns the parsed signature when a problem is typed-judgeable.
-func (m *Model) typedMeta(problemID int64) *runner.Meta {
-	mode, metaJSON, err := m.st.JudgeInfo(problemID)
-	if err != nil || mode != "typed" {
-		return nil
-	}
-	tm, err := runner.ParseMeta(metaJSON)
-	if err != nil {
-		return nil
-	}
-	return tm
-}
-
 func (m *Model) runTests() tea.Cmd {
 	d := m.detail
 	if d == nil {
 		return nil
 	}
-	lang := runner.Registry[runner.Order[m.lang]]
-	tm := m.typedMeta(d.ID)
+	lang := m.language()
+	info := m.code
+	// Problems LeetCode judges itself (shell, custom checkers) say so up
+	// front instead of failing every case against an answer dojo can't build.
+	if plan, why := info.Plan(lang); plan == runner.JudgeNone {
+		return func() tea.Msg { return reportMsg(runner.Report{Note: why}) }
+	}
 	m.running = true
 	return func() tea.Msg {
 		cases, err := m.st.TestCases(d.ID)
@@ -385,7 +425,7 @@ func (m *Model) runTests() tea.Cmd {
 		if _, err := os.Stat(src); err != nil {
 			return errMsg{fmt.Errorf("no solution file yet — press i to start one")}
 		}
-		rep := runner.RunAll(context.Background(), lang, src, cases, tm)
+		rep := runner.RunAll(context.Background(), lang, src, cases, info)
 		return reportMsg(rep)
 	}
 }
@@ -400,7 +440,7 @@ func (m *Model) saveAttempt(rep runner.Report) tea.Cmd {
 		start = time.Now()
 	}
 	hints := m.revealedHints
-	lang := runner.Order[m.lang]
+	lang := m.language().Name
 	return func() tea.Msg {
 		now := time.Now()
 		passed := rep.Total > 0 && rep.Passed == rep.Total && rep.CompileErr == ""
@@ -649,6 +689,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.report = &rep
 		m.status = ""
 		m.renderDetail()
+		if rep.Note != "" {
+			return m, nil // nothing was judged: not an attempt
+		}
 		return m, m.saveAttempt(rep)
 
 	case attemptSavedMsg:
@@ -972,8 +1015,14 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case key.Matches(msg, m.keys.CycleLang):
-		m.lang = (m.lang + 1) % len(runner.Order)
-		m.status = "language: " + runner.Order[m.lang]
+		if len(m.langs) == 0 {
+			m.langs = runner.CodeInfo{}.Languages()
+		}
+		m.lang = (m.lang + 1) % len(m.langs)
+		m.status = "language: " + m.current()
+		if len(m.langs) == 1 {
+			m.status += " — the only one LeetCode offers for this problem"
+		}
 	}
 	return m, nil
 }
@@ -1034,6 +1083,10 @@ func (m *Model) renderDetail() {
 func (m *Model) renderReport() string {
 	rep := m.report
 	var b strings.Builder
+	if rep.Note != "" {
+		b.WriteString(styleDim.Render("NOT JUDGED LOCALLY") + "\n" + rep.Note + "\n")
+		return b.String()
+	}
 	if rep.CompileErr != "" {
 		b.WriteString(styleFail.Render("COMPILE ERROR") + "\n" + rep.CompileErr + "\n")
 		return b.String()
@@ -1247,7 +1300,7 @@ func (m *Model) View() string {
 
 	panes := lipgloss.JoinHorizontal(lipgloss.Top, m.viewList(), m.viewDetail())
 
-	bar := fmt.Sprintf(" %d/%d  lang:%s ", len(m.visible), len(m.problems), runner.Order[m.lang])
+	bar := fmt.Sprintf(" %d/%d  lang:%s ", len(m.visible), len(m.problems), m.language().Name)
 	if fs := m.filterSummary(); fs != "" {
 		bar += " " + styleHeader.Render(fs)
 	}

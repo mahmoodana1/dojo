@@ -29,20 +29,54 @@ python3 scripts/fetch-images.py
 Optional: `pip install markdownify` gives higher-fidelity HTML→markdown
 conversion during ingest (a regex fallback is built in).
 
+### The editor stub is LeetCode's own
+
+dojo stores LeetCode's `codeSnippets` — the literal bytes in the site's editor
+panel — and writes them into your solution file under a two-line comment
+header. Whatever you write pastes back into the site with nothing to strip
+out, in every family LeetCode has:
+
+| Problem family | dojo writes | Judged by |
+|---|---|---|
+| algorithms (3,088) | `class Solution: def twoSum(self, nums: List[int], …)` | typed arguments, deep compare |
+| database (105) | `# Write your MySQL query statement below` | your query against a scratch SQLite DB |
+| pandas (15) | `import pandas as pd` + the DataFrame signature | frames from metaData, result compared as a table |
+| shell (4) | `# Read from the file file.txt and output …` | not locally — solve here, submit on the site |
+| javascript (18) | LeetCode's `var fn = function(…)` | not locally |
+
+Backfill the stubs for a database seeded by an older dojo (network, resumable,
+skips what it already has), then bring the files already on disk into line:
+
+```bash
+python3 scripts/ingest.py --snippets   # fetch the editor stubs
+./dojo -refresh-stubs                  # rewrite the ones you never touched
+```
+
+`-refresh-stubs` only rewrites files that still hold a stub dojo generated —
+compared byte for byte against every stub it has ever written, so a file with
+your work in it is reported and left alone. A scaffold in a language LeetCode
+does not offer for that problem is removed and replaced with the right one
+(`solution.py` → `solution.sql` for a database problem).
+
+The language cycle (`L`) offers exactly the tabs LeetCode offers for that
+problem — a database problem gives you MySQL and Pandas, never C.
+
 ### Typed judging
 
-95% of free problems (3088/3246) generate the **exact LeetCode Python
-signature** — `class Solution` with the real method name and type hints, or
-the real class for design problems. The judge builds true arguments
-(including `TreeNode`/`ListNode` from LeetCode's flat arrays), calls your
-method, and deep-compares the return value. No I/O parsing.
+Algorithm problems build true arguments (including `TreeNode`/`ListNode` from
+LeetCode's flat arrays), call your method, and deep-compare the return value.
+No I/O parsing. `void` returns compare the mutated first argument; design
+problems (LRU Cache, Trie, Min Stack…) replay LeetCode's recorded call
+sequence.
 
-`void` returns compare the mutated first argument; design problems
-(LRU Cache, Trie, Min Stack…) replay LeetCode's recorded call sequence.
+Database problems judge on result sets: same columns, same rows, any order —
+the latitude LeetCode allows. The scratch database is SQLite, so a query that
+leans on MySQL-only syntax (`DATE_ADD`, `IF()`, stored functions) reports an
+error rather than a wrong answer.
 
-The rest fall back to a raw-stdin stub: SQL and shell problems (no Python
-signature exists on LeetCode either), two exotic types (`NestedInteger`,
-`DataFrame`), and ~28 whose examples resist parsing.
+A handful of problems have no local verdict at all and say so instead of
+failing you: shell and JavaScript problems, and the ~30 where LeetCode runs a
+custom checker (in-place mutation, interactive judges).
 
 After editing `scripts/ingest.py`, rebuild cases offline — no network, and
 your solve history is untouched:
@@ -88,10 +122,10 @@ Hyprland --verify-config && hyprctl reload
 There is no submit button — **closing your editor is the submit**:
 
 1. `⏎` open a problem, `i` to start coding (boilerplate is generated for you).
-2. Implement the stub. **Python problems get the real LeetCode signature**
-   (`class Solution: def twoSum(self, nums: List[int], target: int) -> …`) —
-   the judge builds typed arguments and deep-compares your return value, so
-   solutions copy-paste to/from leetcode.com. C/C++ (and non-typed problems)
+2. Implement the stub. **It is LeetCode's own editor panel**, verbatim —
+   `class Solution: def twoSum(self, nums: List[int], target: int) -> …` for
+   algorithms, `# Write your MySQL query statement below` for database
+   problems — so solutions copy-paste to/from leetcode.com unchanged. C/C++
    use raw mode: read stdin, print the answer.
 3. Save and close the editor (`:wq`). The judge compiles/runs your code
    against the local test cases automatically. In tmux, closing the `✎` window
@@ -121,12 +155,12 @@ There is no submit button — **closing your editor is the submit**:
 | `i` | edit solution in `$EDITOR` (judged automatically on exit). Inside tmux this opens a separate tmux window so the problem page stays put. |
 | `r` | re-run the judge |
 | `H` | reveal next hint (counts against your SRS grade) |
-| `L` | cycle language (python → cpp → c) |
+| `L` | cycle language — only the tabs LeetCode offers for this problem (python → cpp → c, or mysql → pandas, or bash) |
 | `D` / `tab` | toggle daily dashboard |
 | `q` | quit |
 
 Solutions live in `~/dojo-solutions/<id>-<slug>/solution.<ext>`; the database
-in `~/.local/share/dojo/dojo.db` (override with `DOJO_DB`).
+in `~/.local/share/dojo/dojo.db` (override with `DOJO_SOLUTIONS` and `DOJO_DB`).
 
 ## Dojo Originals
 

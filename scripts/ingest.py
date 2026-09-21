@@ -53,9 +53,26 @@ DETAIL_QUERY = """
 query questionDetail($titleSlug: String!) {
   question(titleSlug: $titleSlug) {
     questionId content hints metaData exampleTestcases similarQuestions
+    codeSnippets { langSlug code }
   }
 }
 """
+
+# codeSnippets is the editor panel itself — the exact bytes LeetCode puts in
+# your editor for each language. Storing it means a dojo stub can be pasted
+# back into the site unchanged, and it is the only source for stubs metaData
+# cannot describe (shell problems say nothing but {"shell": true}).
+SNIPPET_QUERY = """
+query questionSnippets($titleSlug: String!) {
+  question(titleSlug: $titleSlug) { questionId codeSnippets { langSlug code } }
+}
+"""
+
+
+def snippets_json(q: dict) -> str:
+    """LeetCode's codeSnippets list -> {langSlug: code} JSON, sorted."""
+    return json.dumps({c["langSlug"]: c["code"]
+                       for c in (q.get("codeSnippets") or [])}, sort_keys=True)
 
 
 def gql(query: str, variables: dict) -> dict:
@@ -199,10 +216,30 @@ EXAMPLE_RE = re.compile(
 )
 
 
+# Database problems (and newer statements generally) put the example in
+# fenced blocks instead of inline: "**Input:**", one ``` block per table, then
+# "**Output:**" and one more. The inline regex above stops dead at the first
+# fence, so those statements need their own pass.
+FENCED_EXAMPLE_RE = re.compile(
+    r"\*{0,2}Input:?\*{0,2}\s*(?P<inp>.*?)\*{0,2}Output:?\*{0,2}\s*```\s*(?P<out>.*?)```",
+    re.S,
+)
+
+
+def strip_fences(block: str) -> str:
+    return "\n".join(l for l in block.split("\n") if l.strip() != "```").strip()
+
+
 def parse_examples(description_md: str) -> list[tuple[str, str]]:
     cases = []
     for m in EXAMPLE_RE.finditer(description_md):
         inp, out = m.group("inp").strip().strip("`"), m.group("out").strip().strip("`")
+        if inp and out and len(inp) < 4000:
+            cases.append((inp, out))
+    if cases:
+        return cases
+    for m in FENCED_EXAMPLE_RE.finditer(description_md):
+        inp, out = strip_fences(m.group("inp")), strip_fences(m.group("out"))
         if inp and out and len(inp) < 4000:
             cases.append((inp, out))
     return cases
@@ -366,14 +403,49 @@ def fetch_details(db: sqlite3.Connection, limit: int | None) -> None:
         md = html_to_md(q["content"] or "")
         db.execute(
             """UPDATE problems SET description_md=?, description_html=?, hints_json=?,
-                                   meta_json=?, example_tests=?, similar_json=? WHERE slug=?""",
+                                   meta_json=?, example_tests=?, similar_json=?,
+                                   snippets_json=? WHERE slug=?""",
             (md, q["content"], json.dumps(q["hints"] or []), q["metaData"],
-             q["exampleTestcases"], q["similarQuestions"] or "[]", slug),
+             q["exampleTestcases"], q["similarQuestions"] or "[]",
+             snippets_json(q), slug),
         )
         pid = int(q["questionId"])
         build_cases(db, pid, md, q["metaData"], q["exampleTestcases"])
         db.commit()
         print(f"\rdetails: {i}/{len(rows)}  {slug[:50]:<50}", end="", flush=True)
+        time.sleep(0.4 + random.random() * 0.4)
+    print()
+
+
+def fetch_snippets(db: sqlite3.Connection, limit: int | None) -> None:
+    """Backfill editor stubs for problems ingested before snippets existed.
+
+    Cheap query, resumable: rows already holding snippets are skipped, so a
+    Ctrl-C costs nothing. Problems dojo cannot already reproduce offline come
+    first — a stub is synthesised from metaData only for plain `class
+    Solution` signatures, so SQL/pandas/shell problems are the ones that
+    genuinely need the network."""
+    rows = db.execute(
+        """SELECT slug FROM problems
+           WHERE snippets_json IS NULL AND paid_only = 0
+           ORDER BY judge_mode = 'typed', frontend_id"""
+    ).fetchall()
+    if limit:
+        rows = rows[:limit]
+    if not rows:
+        print("snippets: nothing to fetch")
+        return
+    for i, (slug,) in enumerate(rows, 1):
+        try:
+            q = gql(SNIPPET_QUERY, {"titleSlug": slug})["question"]
+        except Exception as e:  # noqa: BLE001 — log and keep grinding
+            print(f"\n  ! {slug}: {e}", file=sys.stderr)
+            time.sleep(5)
+            continue
+        db.execute("UPDATE problems SET snippets_json=? WHERE slug=?",
+                   (snippets_json(q), slug))
+        db.commit()
+        print(f"\rsnippets: {i}/{len(rows)}  {slug[:50]:<50}", end="", flush=True)
         time.sleep(0.4 + random.random() * 0.4)
     print()
 
@@ -399,6 +471,7 @@ def migrate(db: sqlite3.Connection) -> None:
         "ALTER TABLE problems ADD COLUMN judge_mode TEXT NOT NULL DEFAULT 'raw'",
         "ALTER TABLE test_cases ADD COLUMN args_json TEXT",
         "ALTER TABLE test_cases ADD COLUMN expected_json TEXT",
+        "ALTER TABLE problems ADD COLUMN snippets_json TEXT",
     ):
         try:
             db.execute(ddl)
@@ -413,6 +486,8 @@ def main() -> None:
     ap.add_argument("--skip-catalogue", action="store_true")
     ap.add_argument("--reconvert", action="store_true",
                     help="rebuild markdown/test cases from stored HTML, no network")
+    ap.add_argument("--snippets", action="store_true",
+                    help="backfill LeetCode editor stubs (codeSnippets) only")
     args = ap.parse_args()
 
     Path(args.db).parent.mkdir(parents=True, exist_ok=True)
@@ -423,6 +498,10 @@ def main() -> None:
 
     if args.reconvert:
         reconvert(db)
+        return
+
+    if args.snippets:
+        fetch_snippets(db, args.limit)
         return
 
     if not args.skip_catalogue:

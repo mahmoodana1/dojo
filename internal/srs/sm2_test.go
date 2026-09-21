@@ -29,6 +29,39 @@ func TestReviewProgression(t *testing.T) {
 	}
 }
 
+// A long streak of clean solves must not schedule a card past the cap.
+// Before the bounds existed this ran to millions of days, which is how
+// live cards ended up due in the year 28705 and left the queue for good.
+func TestIntervalNeverRunsAway(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	c := New()
+	for i := 1; i <= 50; i++ {
+		c = Review(c, 5, now)
+		if c.IntervalDays > MaxIntervalDays {
+			t.Fatalf("review %d: interval %d days exceeds cap %d", i, c.IntervalDays, MaxIntervalDays)
+		}
+		if c.Ease > MaxEase {
+			t.Fatalf("review %d: ease %.2f exceeds cap %.2f", i, c.Ease, MaxEase)
+		}
+	}
+	if c.Due.After(now.AddDate(0, 0, MaxIntervalDays)) {
+		t.Fatalf("due %v is past the cap measured from %v", c.Due, now)
+	}
+}
+
+// Recovery from a lapse must still start over at one day, cap or no cap.
+func TestLapseResetsUnderCap(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	c := New()
+	for i := 0; i < 30; i++ {
+		c = Review(c, 5, now)
+	}
+	c = Review(c, 1, now)
+	if c.IntervalDays != 1 || c.Reps != 0 {
+		t.Fatalf("lapse after a long streak should reset: %+v", c)
+	}
+}
+
 func TestQuality(t *testing.T) {
 	cases := []struct {
 		passed  bool

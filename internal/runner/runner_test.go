@@ -16,7 +16,7 @@ func TestRunAllPython(t *testing.T) {
 	rep := RunAll(context.Background(), Registry["python"], src, []Case{
 		{Input: "abc", Expected: "ABC"},
 		{Input: "dojo", Expected: "WRONG"},
-	}, nil)
+	}, CodeInfo{})
 	if rep.CompileErr != "" {
 		t.Fatalf("unexpected compile error: %s", rep.CompileErr)
 	}
@@ -37,7 +37,7 @@ int main(void){int a,b;scanf("%d %d",&a,&b);printf("%d\n",a+b);return 0;}`
 	}
 	rep := RunAll(context.Background(), Registry["c"], src, []Case{
 		{Input: "2 3", Expected: "5"},
-	}, nil)
+	}, CodeInfo{})
 	if rep.CompileErr != "" {
 		t.Fatalf("compile error: %s", rep.CompileErr)
 	}
@@ -49,14 +49,14 @@ int main(void){int a,b;scanf("%d %d",&a,&b);printf("%d\n",a+b);return 0;}`
 func TestEnsureSolutionFileDoesNotClobber(t *testing.T) {
 	root := t.TempDir()
 	meta := SolutionMeta{FrontendID: 1, Title: "Two Sum", Slug: "two-sum", Difficulty: "Easy"}
-	p1, _, err := EnsureSolutionFile(root, meta, Registry["python"], nil)
+	p1, _, err := EnsureSolutionFile(root, meta, Registry["python"], CodeInfo{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(p1, []byte("my work"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	p2, _, err := EnsureSolutionFile(root, meta, Registry["python"], nil)
+	p2, _, err := EnsureSolutionFile(root, meta, Registry["python"], CodeInfo{})
 	if err != nil {
 		t.Fatal(err)
 	}

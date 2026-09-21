@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS problems (
     description_html TEXT,                         -- raw API HTML; lets us re-run the converter offline
     hints_json      TEXT    NOT NULL DEFAULT '[]', -- JSON array of hint strings
     meta_json       TEXT,                          -- LeetCode metaData (function signature) for future codegen
+    snippets_json   TEXT,                          -- LeetCode codeSnippets: {langSlug: editor stub}, verbatim
     example_tests   TEXT,                          -- raw exampleTestcases blob from the API
     acceptance_rate REAL,
     paid_only       INTEGER NOT NULL DEFAULT 0,

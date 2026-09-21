@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/mahmood/dojo/internal/srs"
 )
 
 func testStore(t *testing.T) *Store {
@@ -172,5 +174,45 @@ func TestDashboardEmptyDB(t *testing.T) {
 	}
 	if st.Records.FirstTryPct != -1 {
 		t.Errorf("FirstTryPct = %d, want -1 (no attempts)", st.Records.FirstTryPct)
+	}
+}
+
+// A schedule written before srs gained its bounds must be clamped when the
+// database is opened, and its due date recomputed from the last attempt.
+// The year-28705 row this reproduces did not parse as RFC3339, so GetReview
+// read it as the zero time and the card was lost from the queue.
+func TestMigrationRepairsRunawaySchedule(t *testing.T) {
+	s := testStore(t)
+	seedProblem(t, s, 1406, "Runaway", "todo")
+	mustExec(t, s, `INSERT INTO attempts
+		(problem_id, started_at, finished_at, language, passed, cases_passed, cases_total, wall_ms)
+		VALUES (?, ?, ?, 'go', 1, 1, 1, 100)`,
+		1406, "2026-08-16T19:10:45Z", "2026-08-16T20:10:45Z")
+	mustExec(t, s, `INSERT INTO reviews (problem_id, ease, interval_days, reps, lapses, due_at)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		1406, 3.5600000000000014, 9744440, 16, 1, "28705-12-30T21:10:45Z")
+
+	repairRunawaySchedules(s.db)
+
+	card, err := s.GetReview(1406)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if card.IntervalDays != srs.MaxIntervalDays {
+		t.Errorf("interval = %d, want %d", card.IntervalDays, srs.MaxIntervalDays)
+	}
+	if card.Ease > srs.MaxEase {
+		t.Errorf("ease = %v, want <= %v", card.Ease, srs.MaxEase)
+	}
+	want := time.Date(2027, 8, 16, 20, 10, 45, 0, time.UTC)
+	if !card.Due.Equal(want) {
+		t.Errorf("due = %v, want %v (last attempt + cap)", card.Due, want)
+	}
+
+	// Idempotent: a second open must not shift the repaired schedule again.
+	repairRunawaySchedules(s.db)
+	again, _ := s.GetReview(1406)
+	if !again.Due.Equal(card.Due) {
+		t.Errorf("re-running moved due from %v to %v", card.Due, again.Due)
 	}
 }

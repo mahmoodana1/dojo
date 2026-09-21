@@ -35,7 +35,49 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
+	migrate(db)
 	return &Store{db: db}, nil
+}
+
+// migrate adds columns to databases created by an older dojo. schema.sql is
+// all CREATE IF NOT EXISTS, so it never alters an existing table; these do.
+// A duplicate-column error means the migration already ran — ignore it.
+func migrate(db *sql.DB) {
+	for _, ddl := range []string{
+		`ALTER TABLE problems ADD COLUMN snippets_json TEXT`,
+	} {
+		_, _ = db.Exec(ddl)
+	}
+	repairRunawaySchedules(db)
+}
+
+// repairRunawaySchedules clamps rows written before srs gained its bounds.
+//
+// The scheduler multiplied interval by ease on every success with no ceiling
+// on either, so a well-known card could reach millions of days and fall out
+// of the queue permanently — one row here was due in the year 28705, which
+// does not even parse as RFC3339, so GetReview silently read it as the zero
+// time. Both statements are value clamps, so re-running them is a no-op.
+//
+// Only a row whose interval actually changes gets a new due date, computed
+// from its last attempt. Rewriting due_at for a row that merely drifted in
+// ease would shift a perfectly good schedule for no reason.
+func repairRunawaySchedules(db *sql.DB) {
+	_, _ = db.Exec(`
+		UPDATE reviews SET ease = MIN(ease, ?) WHERE ease > ?`,
+		srs.MaxEase, srs.MaxEase)
+
+	_, _ = db.Exec(`
+		UPDATE reviews
+		SET due_at = strftime('%Y-%m-%dT%H:%M:%SZ',
+		        COALESCE(
+		            (SELECT MAX(finished_at) FROM attempts a
+		             WHERE a.problem_id = reviews.problem_id),
+		            CURRENT_TIMESTAMP),
+		        '+' || ? || ' days'),
+		    interval_days = ?
+		WHERE interval_days > ?`,
+		srs.MaxIntervalDays, srs.MaxIntervalDays, srs.MaxIntervalDays)
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -176,6 +218,26 @@ func (s *Store) JudgeInfo(problemID int64) (mode, metaJSON string, err error) {
 		`SELECT COALESCE(judge_mode, 'raw'), meta_json FROM problems WHERE id = ?`,
 		problemID).Scan(&mode, &meta)
 	return mode, meta.String, err
+}
+
+// CodeInfo is everything needed to produce a problem's editor stub and pick
+// how it is judged: LeetCode's own per-language snippets plus the signature
+// metadata dojo falls back to when a snippet has not been fetched.
+func (s *Store) CodeInfo(problemID int64) (runner.CodeInfo, error) {
+	var meta, snips sql.NullString
+	var info runner.CodeInfo
+	err := s.db.QueryRow(
+		`SELECT COALESCE(judge_mode, 'raw'), meta_json, snippets_json, paid_only
+		 FROM problems WHERE id = ?`, problemID).
+		Scan(&info.JudgeMode, &meta, &snips, &info.PaidOnly)
+	if err != nil {
+		return info, err
+	}
+	info.MetaJSON = meta.String
+	if snips.Valid && snips.String != "" {
+		_ = json.Unmarshal([]byte(snips.String), &info.Snippets)
+	}
+	return info, nil
 }
 
 type Attempt struct {

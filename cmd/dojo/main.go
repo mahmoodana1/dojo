@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,10 @@ import (
 )
 
 func main() {
+	refresh := flag.Bool("refresh-stubs", false,
+		"regenerate untouched solution stubs to match LeetCode's editor, then exit")
+	flag.Parse()
+
 	dbPath := os.Getenv("DOJO_DB")
 	if dbPath == "" {
 		home, err := os.UserHomeDir()
@@ -28,6 +33,14 @@ func main() {
 		os.Exit(1)
 	}
 	defer st.Close()
+
+	if *refresh {
+		if err := refreshStubs(st, app.SolutionsRoot()); err != nil {
+			fmt.Fprintln(os.Stderr, "refresh stubs:", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	p := tea.NewProgram(app.New(st), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
