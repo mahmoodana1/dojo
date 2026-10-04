@@ -7,20 +7,16 @@
 # `dispatch exec "[workspace 7] ..."` form is a Lua syntax error here.
 
 dojo="$HOME/.local/bin/dojo"
-resurrect_last="$HOME/.local/share/tmux/resurrect/last"
 
-# Is dojo actually running in the session's first pane? A session restored by
-# tmux-resurrect has the right name but only a bare zsh in it.
+# Is dojo actually running in the session's first pane? (If dojo exited, the
+# session would hold only a bare shell.)
 dojo_alive() {
     [ "$(tmux display-message -p -t dojo:1.1 '#{pane_current_command}' 2>/dev/null)" = dojo ]
 }
 windows() { tmux list-windows -t dojo 2>/dev/null | wc -l; }
 
-server_was_up=0
-tmux has-session 2>/dev/null && server_was_up=1
-
 # Throw the session away (and start over) if:
-#  - it holds no dojo (a resurrect leftover, or dojo fell back to a shell), or
+#  - it holds no dojo (dojo fell back to a shell), or
 #  - the binary was rebuilt after the running instance started, so updates take
 #    effect.
 # Never while an editor window is open (>1 window means a solve is in progress).
@@ -59,20 +55,5 @@ fi
 tmux has-session -t dojo 2>/dev/null \
     || tmux new-session -d -s dojo -e "DOJO_GRAPHICS=$gfx" "$dojo"
 
-# If that just started the tmux server (first launch after boot), continuum
-# runs a resurrect restore ~1s later, and its switch-client calls would drag an
-# attached dojo window through every restored session. So the terminal waits
-# for the post-restore hook (set in ~/.tmux.conf) before attaching.
-wait_restore=0
-[ "$server_was_up" = 0 ] && [ -e "$resurrect_last" ] && wait_restore=1
-
 # shellcheck disable=SC2086
-setsid -f $term -e sh -c '
-    if [ "$1" = 1 ]; then
-        i=0   # give up after ~6s; a restore normally takes 1-3s
-        while [ "$(tmux show -gv @restore-done 2>/dev/null)" != 1 ] && [ $i -lt 60 ]; do
-            sleep 0.1; i=$((i + 1))
-        done
-    fi
-    exec tmux attach-session -t dojo
-' sh "$wait_restore" >/dev/null 2>&1
+setsid -f $term -e tmux attach-session -t dojo >/dev/null 2>&1
