@@ -216,3 +216,22 @@ func TestMigrationRepairsRunawaySchedule(t *testing.T) {
 		t.Errorf("re-running moved due from %v to %v", card.Due, again.Due)
 	}
 }
+
+func TestDetailByFrontendID(t *testing.T) {
+	s := testStore(t)
+	mustExec(t, s, `INSERT INTO problems (id, frontend_id, slug, title, difficulty, hints_json)
+		VALUES (77, 1, 'two-sum', 'Two Sum', 'Easy', '["use a map"]')`)
+	mustExec(t, s, `INSERT INTO tags (slug, name) VALUES ('array', 'Array'), ('hash-table', 'Hash Table')`)
+	mustExec(t, s, `INSERT INTO problem_tags (problem_id, tag_id) SELECT 77, id FROM tags`)
+
+	d, err := s.DetailByFrontendID(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.ID != 77 || d.Title != "Two Sum" || len(d.Hints) != 1 || len(d.Tags) != 2 {
+		t.Errorf("DetailByFrontendID = %+v", d)
+	}
+	if _, err := s.DetailByFrontendID(999); err == nil {
+		t.Error("missing problem: no error")
+	}
+}

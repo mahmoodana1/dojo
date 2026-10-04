@@ -157,6 +157,31 @@ func (s *Store) GetDetail(id int64) (*ProblemDetail, error) {
 	return &d, nil
 }
 
+// DetailByFrontendID looks a problem up by the number LeetCode shows, tags
+// included — what the tmux helpers (sensei, the switcher) know a problem by.
+func (s *Store) DetailByFrontendID(fid int64) (*ProblemDetail, error) {
+	var id int64
+	if err := s.db.QueryRow(`SELECT id FROM problems WHERE frontend_id = ?`, fid).Scan(&id); err != nil {
+		return nil, fmt.Errorf("problem %d: %w", fid, err)
+	}
+	d, err := s.GetDetail(id)
+	if err != nil {
+		return nil, err
+	}
+	var tags string
+	err = s.db.QueryRow(`
+		SELECT COALESCE(group_concat(t.name, ','), '')
+		FROM problem_tags pt JOIN tags t ON t.id = pt.tag_id
+		WHERE pt.problem_id = ?`, id).Scan(&tags)
+	if err != nil {
+		return nil, err
+	}
+	if tags != "" {
+		d.Tags = strings.Split(tags, ",")
+	}
+	return d, nil
+}
+
 // Content is the heavyweight part of a problem, preloaded in bulk at startup
 // so opening any problem is a memory lookup instead of a query.
 type Content struct {

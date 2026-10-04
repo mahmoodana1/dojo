@@ -25,6 +25,8 @@ import (
 	"github.com/mahmood/dojo/internal/runner"
 	"github.com/mahmood/dojo/internal/srs"
 	"github.com/mahmood/dojo/internal/store"
+	"github.com/mahmood/dojo/internal/tmux"
+	"github.com/mahmood/dojo/internal/tutor"
 )
 
 type screen int
@@ -64,10 +66,27 @@ type membersMsg struct {
 	name string
 	ids  map[int64]bool
 }
-type reportMsg runner.Report
-type editorDoneMsg struct{ err error }
+
+// reportMsg is a verdict for one problem — not necessarily the one on
+// screen: in tmux several solutions can be open, and any may close.
+type reportMsg struct {
+	rep       runner.Report
+	problemID int64
+	label     string // "1. Two Sum", for the status line when off screen
+	lang      string
+	start     time.Time
+	hints     int
+}
+
+// editorDoneMsg says the editor for one problem (in one language) closed.
+type editorDoneMsg struct {
+	err       error
+	problemID int64
+	lang      string
+}
 type tagCountsMsg []store.TagCount
 type attemptSavedMsg struct{}
+type jumpMsg struct{ id int64 }
 type errMsg struct{ err error }
 
 // tickMsg carries the tick-chain generation so a stale chain (from before a
@@ -138,12 +157,21 @@ type Model struct {
 
 	// languages this problem offers, mirroring LeetCode's own tabs: algorithm
 	// problems get python/cpp/c, database problems mysql/pandas, shell bash.
-	langs     []string
-	lang      int // index into langs
-	code      runner.CodeInfo
-	report    *runner.Report
-	running   bool
-	editStart time.Time
+	langs   []string
+	lang    int // index into langs
+	code    runner.CodeInfo
+	report  *runner.Report
+	running bool
+
+	// per-problem solve state, kept across moving between problems — in
+	// tmux several solutions can be in flight at once
+	editStarts map[int64]time.Time     // when the current attempt began
+	reports    map[int64]runner.Report // latest verdict
+	hintsUsed  map[int64]int           // hints revealed
+
+	hiddenUndo []int64 // dd history, newest last; U restores
+
+	tm *tmuxCtx // nil outside tmux
 
 	stats  store.DashboardStats
 	status string // transient status-bar message
@@ -170,10 +198,21 @@ func New(st *store.Store) *Model {
 	ti.Placeholder = "fuzzy title, or d:hard t:graph s:todo"
 	return &Model{st: st, keys: defaultKeyMap(), filter: ti, screen: screenDashboard,
 		diffFilter: map[string]bool{}, tagFilter: map[string]bool{},
-		renderCache:   map[int64]string{},
-		quote:         senseiQuotes[rand.Intn(len(senseiQuotes))],
-		dashEnteredAt: time.Now(), quoteChangedAt: time.Now()}
+		renderCache:    map[int64]string{},
+		editStarts:     map[int64]time.Time{},
+		reports:        map[int64]runner.Report{},
+		hintsUsed:      map[int64]int{},
+		quote:          senseiQuotes[rand.Intn(len(senseiQuotes))],
+		dashEnteredAt:  time.Now(),
+		quoteChangedAt: time.Now()}
 }
+
+// AttachTmux wires dojo into the tmux session it runs in (no-op outside
+// tmux): solution windows, prefix+t sensei, prefix+s switcher, status line.
+func (m *Model) AttachTmux() { m.tm = setupTmux() }
+
+// DetachTmux withdraws what AttachTmux published.
+func (m *Model) DetachTmux() { m.tm.Teardown() }
 
 func (m *Model) Init() tea.Cmd {
 	return tea.Batch(m.loadProblems(), m.loadContent(), m.loadStats(), m.loadLists(), m.tickCmd())
@@ -293,9 +332,13 @@ func (m *Model) setDetail(p *store.Problem) {
 	c := m.content[p.ID]
 	m.detail = &store.ProblemDetail{Problem: *p, Description: c.Description,
 		Hints: c.Hints, Notes: c.Notes}
-	m.revealedHints = 0
+	m.revealedHints = min(m.hintsUsed[p.ID], len(c.Hints))
 	m.report = nil
+	if rep, ok := m.reports[p.ID]; ok {
+		m.report = &rep
+	}
 	m.setLanguages(p.ID)
+	m.tm.publish(p.FrontendID, p.Title)
 	m.renderDetail()
 	m.viewport.GotoTop()
 }
@@ -361,6 +404,17 @@ func (m *Model) openEditor() tea.Cmd {
 	if d == nil {
 		return nil
 	}
+	// In tmux, a problem has at most one solution window: i on a problem
+	// that already has one switches to it.
+	if m.tm != nil {
+		if w := m.tm.editorWindow(d.FrontendID); w != "" {
+			if _, err := tmux.Run("select-window", "-t", w); err != nil {
+				return func() tea.Msg { return errMsg{err} }
+			}
+			m.status = fmt.Sprintf("%d. %s is already open — switched to its window", d.FrontendID, d.Title)
+			return nil
+		}
+	}
 	lang := m.language()
 	path, note, err := runner.EnsureSolutionFile(solutionsRoot(), runner.SolutionMeta{
 		FrontendID: d.FrontendID, Title: d.Title, Slug: d.Slug, Difficulty: d.Difficulty,
@@ -375,30 +429,32 @@ func (m *Model) openEditor() tea.Cmd {
 	if editor == "" {
 		editor = "nvim"
 	}
-	m.editStart = time.Now()
+	m.editStarts[d.ID] = time.Now()
+	done := editorDoneMsg{problemID: d.ID, lang: lang.Name}
 
 	// Inside tmux: open the editor in its own window so the problem page
 	// stays put — flip back to it anytime. `tmux wait-for` tells us when the
 	// editor closes so the auto-judge still fires.
-	if os.Getenv("TMUX") != "" {
+	if m.tm != nil {
 		signal := fmt.Sprintf("dojo-edit-%d", time.Now().UnixNano())
-		winName := fmt.Sprintf("✎%d", d.FrontendID)
-		shellCmd := fmt.Sprintf("%s %q; tmux wait-for -S %s", editor, path, signal)
-		if err := exec.Command("tmux", "new-window", "-n", winName, shellCmd).Run(); err != nil {
-			return func() tea.Msg { return errMsg{fmt.Errorf("tmux new-window: %w", err)} }
+		if err := m.tm.openEditorWindow(editor, path, d.FrontendID, d.Title, signal); err != nil {
+			return func() tea.Msg { return errMsg{err} }
 		}
-		m.status = fmt.Sprintf("editing in tmux window %s — judge runs when it closes", winName)
+		if note == "" {
+			m.status = fmt.Sprintf("editing %d. %s — closing the editor submits", d.FrontendID, d.Title)
+		}
 		return func() tea.Msg {
 			_ = exec.Command("tmux", "wait-for", signal).Run()
-			return editorDoneMsg{nil}
+			return done
 		}
 	}
 
 	// Outside tmux: classic suspend-and-resume handoff.
-	c := exec.Command(editor, path)
-	return tea.ExecProcess(c, func(err error) tea.Msg { return editorDoneMsg{err} })
+	c := exec.Command("sh", "-c", editor+` "$1"`, "sh", path)
+	return tea.ExecProcess(c, func(err error) tea.Msg { done.err = err; return done })
 }
 
+// runTests judges the problem on screen in the selected language.
 func (m *Model) runTests() tea.Cmd {
 	d := m.detail
 	if d == nil {
@@ -406,10 +462,18 @@ func (m *Model) runTests() tea.Cmd {
 	}
 	lang := m.language()
 	info := m.code
+	start := m.editStarts[d.ID]
+	if start.IsZero() {
+		start = time.Now()
+	}
+	base := reportMsg{problemID: d.ID, lang: lang.Name, start: start, hints: m.hintsUsed[d.ID],
+		label: fmt.Sprintf("%d. %s", d.FrontendID, d.Title)}
+	dir := filepath.Join(solutionsRoot(), fmt.Sprintf("%04d-%s", d.FrontendID, d.Slug))
 	// Problems LeetCode judges itself (shell, custom checkers) say so up
 	// front instead of failing every case against an answer dojo can't build.
 	if plan, why := info.Plan(lang); plan == runner.JudgeNone {
-		return func() tea.Msg { return reportMsg(runner.Report{Note: why}) }
+		base.rep = runner.Report{Note: why}
+		return func() tea.Msg { return base }
 	}
 	m.running = true
 	return func() tea.Msg {
@@ -420,39 +484,32 @@ func (m *Model) runTests() tea.Cmd {
 		if len(cases) == 0 {
 			return errMsg{fmt.Errorf("no test cases for %s (add some, or re-run ingest)", d.Slug)}
 		}
-		src := filepath.Join(solutionsRoot(),
-			fmt.Sprintf("%04d-%s", d.FrontendID, d.Slug), "solution"+lang.Ext)
+		src := filepath.Join(dir, "solution"+lang.Ext)
 		if _, err := os.Stat(src); err != nil {
 			return errMsg{fmt.Errorf("no solution file yet — press i to start one")}
 		}
-		rep := runner.RunAll(context.Background(), lang, src, cases, info)
-		return reportMsg(rep)
+		base.rep = runner.RunAll(context.Background(), lang, src, cases, info)
+		// sensei reads the latest verdict from here
+		_ = os.WriteFile(filepath.Join(dir, tutor.LastRunFile),
+			[]byte(plainReport(&base.rep, lang.Name, time.Now())), 0o644)
+		return base
 	}
 }
 
-func (m *Model) saveAttempt(rep runner.Report) tea.Cmd {
-	d := m.detail
-	if d == nil {
-		return nil
-	}
-	start := m.editStart
-	if start.IsZero() {
-		start = time.Now()
-	}
-	hints := m.revealedHints
-	lang := m.language().Name
+func (m *Model) saveAttempt(r reportMsg) tea.Cmd {
+	rep := r.rep
 	return func() tea.Msg {
 		now := time.Now()
 		passed := rep.Total > 0 && rep.Passed == rep.Total && rep.CompileErr == ""
 		_ = m.st.RecordAttempt(store.Attempt{
-			ProblemID: d.ID, StartedAt: start, FinishedAt: now, Language: lang,
+			ProblemID: r.problemID, StartedAt: r.start, FinishedAt: now, Language: r.lang,
 			Passed: passed, CasesPassed: rep.Passed, CasesTotal: rep.Total,
-			WallMs: rep.TotalMs, HintsUsed: hints,
+			WallMs: rep.TotalMs, HintsUsed: r.hints,
 		})
-		card, err := m.st.GetReview(d.ID)
+		card, err := m.st.GetReview(r.problemID)
 		if err == nil {
-			q := srs.Quality(passed, hints, now.Sub(start).Minutes(), 35)
-			_ = m.st.SaveReview(d.ID, srs.Review(card, q, now))
+			q := srs.Quality(passed, r.hints, now.Sub(r.start).Minutes(), 35)
+			_ = m.st.SaveReview(r.problemID, srs.Review(card, q, now))
 		}
 		return attemptSavedMsg{}
 	}
@@ -618,6 +675,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case problemsMsg:
 		m.problems = msg
 		m.applyFilter()
+		if strings.HasPrefix(m.status, "syncing") {
+			m.status = fmt.Sprintf("synced — %d problems", len(m.problems))
+		}
 		return m, nil
 
 	case statsMsg:
@@ -669,6 +729,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case jumpMsg:
+		m.jumpTo(msg.id)
+		return m, nil
+
+	case tutorDoneMsg:
+		if msg.err != nil {
+			m.err = msg.err
+		}
+		return m, nil
+
 	case imageViewerDoneMsg:
 		if msg.err != nil {
 			m.err = msg.err
@@ -680,19 +750,51 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 			return m, nil
 		}
+		// Judge the problem that was edited, which needn't be the one on
+		// screen: bring it up, in the language it was written in.
+		if m.detail == nil || m.detail.ID != msg.problemID {
+			m.jumpTo(msg.problemID)
+		}
+		if m.detail == nil || m.detail.ID != msg.problemID {
+			m.err = fmt.Errorf("edited problem is no longer in the list — not judged")
+			return m, nil
+		}
+		for i, name := range m.langs {
+			if name == msg.lang {
+				m.lang = i
+			}
+		}
 		m.status = "editor closed — judging…"
 		return m, m.runTests()
 
 	case reportMsg:
 		m.running = false
-		rep := runner.Report(msg)
-		m.report = &rep
-		m.status = ""
-		m.renderDetail()
-		if rep.Note != "" {
+		m.reports[msg.problemID] = msg.rep
+		if m.detail != nil && m.detail.ID == msg.problemID {
+			rep := msg.rep
+			m.report = &rep
+			m.status = verdictLine(&rep) + " — verdict below"
+			m.renderDetail()
+			m.viewport.GotoBottom() // the verdict is appended after the statement
+		} else {
+			m.status = msg.label + ": " + verdictLine(&msg.rep)
+		}
+		if msg.rep.Note != "" {
 			return m, nil // nothing was judged: not an attempt
 		}
-		return m, m.saveAttempt(rep)
+		return m, m.saveAttempt(msg)
+
+	case editRequestMsg:
+		for _, p := range m.problems {
+			if p.FrontendID == msg.fid {
+				m.jumpTo(p.ID)
+				if m.detail != nil && m.detail.ID == p.ID {
+					return m, m.openEditor()
+				}
+			}
+		}
+		m.err = fmt.Errorf("problem %d is not in the list (hidden?)", msg.fid)
+		return m, nil
 
 	case attemptSavedMsg:
 		// refresh every dashboard surface: problem statuses, stats/queues,
@@ -762,21 +864,6 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if k == "v" && m.screen == screenBrowser {
-		if p := m.selected(); p != nil && (m.detail == nil || m.detail.ID != p.ID) {
-			m.setDetail(p)
-		}
-		if m.detail == nil {
-			return m, nil
-		}
-		// real pixels via kitty when available, half-block viewer otherwise
-		if kittyCapable() {
-			return m, m.openImageViewer()
-		}
-		m.imageOpen, m.imageIdx = true, 0
-		return m, nil
-	}
-
 	// tag-browser modal captures all keys while open
 	if m.tagPicking {
 		switch k {
@@ -807,20 +894,48 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// vim two-key sequences: dd hides, gg jumps to top
+	if k == "v" && m.screen == screenBrowser {
+		if p := m.selected(); p != nil && (m.detail == nil || m.detail.ID != p.ID) {
+			m.setDetail(p)
+		}
+		if m.detail == nil {
+			return m, nil
+		}
+		// real pixels via kitty when available, half-block viewer otherwise
+		if kittyCapable() {
+			return m, m.openImageViewer()
+		}
+		m.imageOpen, m.imageIdx = true, 0
+		return m, nil
+	}
+
+	// vim two-key sequences: dd hides, gg jumps to top. Both keys can arrive
+	// in one read (fast typing, a laggy ssh link) as a single "dd".
+	if k == "dd" || k == "gg" {
+		m.pending, k = k[:1], k[1:]
+	}
 	if m.pending != "" {
 		pending := m.pending
 		m.pending = ""
 		switch {
-		case pending == "d" && k == "d":
+		case pending == "d" && k == "d" && m.screen == screenBrowser:
+			// browser only: on the dashboard the list cursor is invisible, so
+			// dd there would hide a problem you can't see
 			if p := m.selected(); p != nil {
 				id := p.ID
-				m.status = fmt.Sprintf("hidden %q — it won't be suggested again", p.Title)
+				m.hiddenUndo = append(m.hiddenUndo, id)
+				m.status = fmt.Sprintf("hidden %q — U to undo", p.Title)
 				return m, tea.Sequence(
-					func() tea.Msg { _ = m.st.SetHidden(id, true); return nil },
+					func() tea.Msg {
+						if err := m.st.SetHidden(id, true); err != nil {
+							return errMsg{err}
+						}
+						return nil
+					},
 					m.loadProblems(),
 				)
 			}
+			return m, nil
 		case pending == "g" && k == "g":
 			if m.screen == screenDashboard {
 				m.dashCursor = 0
@@ -850,7 +965,11 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.dashEnteredAt = time.Now() // replay the entrance animation
 		}
 		m.tickSeq++ // retire the old tick chain, start one at the right rate
-		return m, tea.Batch(m.loadStats(), m.tickCmd())
+		cmds := []tea.Cmd{m.loadStats(), m.tickCmd()}
+		if m.screen == screenBrowser {
+			cmds = append(cmds, m.schedulePreview()) // show what the cursor is on
+		}
+		return m, tea.Batch(cmds...)
 	}
 
 	if m.screen == screenDashboard {
@@ -941,6 +1060,29 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "s": // sync: pull in freshly-ingested problems without restarting
 		m.status = "syncing from database…"
 		return m, tea.Batch(m.loadProblems(), m.loadContent(), m.loadStats(), m.loadLists())
+	case "U": // undo the last dd
+		if n := len(m.hiddenUndo); n > 0 {
+			id := m.hiddenUndo[n-1]
+			m.hiddenUndo = m.hiddenUndo[:n-1]
+			m.status = "unhidden — back in rotation"
+			return m, tea.Sequence(
+				func() tea.Msg {
+					if err := m.st.SetHidden(id, false); err != nil {
+						return errMsg{err}
+					}
+					return nil
+				},
+				m.loadProblems(),
+				func() tea.Msg { return jumpMsg{id} },
+			)
+		}
+		m.status = "nothing to undo"
+		return m, nil
+	case "t": // sensei
+		if p := m.selected(); p != nil && (m.detail == nil || m.detail.ID != p.ID) {
+			m.setDetail(p)
+		}
+		return m, m.openTutor()
 	case "esc": // drop back to the full problem set
 		if m.activeList != "" {
 			m.activeList = ""
@@ -979,9 +1121,17 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case key.Matches(msg, m.keys.HalfDown):
+		if m.focus == panelList {
+			m.cursor = min(m.cursor+m.halfPage(), max(0, len(m.visible)-1))
+			return m, m.schedulePreview()
+		}
 		m.viewport.HalfViewDown()
 
 	case key.Matches(msg, m.keys.HalfUp):
+		if m.focus == panelList {
+			m.cursor = max(m.cursor-m.halfPage(), 0)
+			return m, m.schedulePreview()
+		}
 		m.viewport.HalfViewUp()
 
 	case key.Matches(msg, m.keys.Bottom):
@@ -1006,11 +1156,15 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case key.Matches(msg, m.keys.Run):
+		if p := m.selected(); p != nil && (m.detail == nil || m.detail.ID != p.ID) {
+			m.setDetail(p)
+		}
 		return m, m.runTests()
 
 	case key.Matches(msg, m.keys.Hint):
 		if m.detail != nil && m.revealedHints < len(m.detail.Hints) {
 			m.revealedHints++
+			m.hintsUsed[m.detail.ID] = max(m.hintsUsed[m.detail.ID], m.revealedHints)
 			m.renderDetail()
 		}
 
@@ -1028,6 +1182,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // --- view -------------------------------------------------------------------
+
+func (m *Model) halfPage() int { return max(1, (m.height-4)/2) }
 
 func (m *Model) listWidth() int   { return max(30, m.width*38/100) }
 func (m *Model) detailWidth() int { return max(20, m.width-m.listWidth()) }
@@ -1080,8 +1236,9 @@ func (m *Model) renderDetail() {
 	m.viewport.SetContent(out)
 }
 
-func (m *Model) renderReport() string {
-	rep := m.report
+func (m *Model) renderReport() string { return formatReport(m.report) }
+
+func formatReport(rep *runner.Report) string {
 	var b strings.Builder
 	if rep.Note != "" {
 		b.WriteString(styleDim.Render("NOT JUDGED LOCALLY") + "\n" + rep.Note + "\n")
@@ -1111,6 +1268,53 @@ func (m *Model) renderReport() string {
 				firstLine(r.Expected), firstLine(r.Got))
 			if r.Stderr != "" {
 				fmt.Fprintf(&b, "   stderr:   %s\n", firstLine(r.Stderr))
+			}
+		}
+	}
+	return b.String()
+}
+
+// verdictLine is a one-line summary for the status bar.
+func verdictLine(rep *runner.Report) string {
+	switch {
+	case rep.Note != "":
+		return "not judged locally"
+	case rep.CompileErr != "":
+		return "compile error"
+	case rep.Passed == rep.Total && rep.Total > 0:
+		return fmt.Sprintf("PASS %d/%d", rep.Passed, rep.Total)
+	}
+	return fmt.Sprintf("FAIL %d/%d", rep.Passed, rep.Total)
+}
+
+// plainReport is the verdict as sensei reads it: no colour, full output
+// rather than first lines, and when and in what language it was judged.
+func plainReport(rep *runner.Report, lang string, at time.Time) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "judged %s · %s\n", at.Format("2006-01-02 15:04"), lang)
+	switch {
+	case rep.Note != "":
+		fmt.Fprintf(&b, "NOT JUDGED LOCALLY\n%s\n", rep.Note)
+		return b.String()
+	case rep.CompileErr != "":
+		fmt.Fprintf(&b, "COMPILE ERROR\n%s\n", rep.CompileErr)
+		return b.String()
+	}
+	fmt.Fprintf(&b, "%s\n", verdictLine(rep))
+	for _, r := range rep.Results {
+		mark := "pass"
+		if !r.Pass {
+			mark = "FAIL"
+		}
+		fmt.Fprintf(&b, "\ncase %d: %s (%d ms)", r.Index, mark, r.Ms)
+		if r.TimedOut {
+			b.WriteString(" TIMEOUT")
+		}
+		b.WriteString("\n")
+		if !r.Pass && !r.Hidden && !r.TimedOut {
+			fmt.Fprintf(&b, "expected:\n%s\ngot:\n%s\n", r.Expected, r.Got)
+			if r.Stderr != "" {
+				fmt.Fprintf(&b, "stderr:\n%s\n", r.Stderr)
 			}
 		}
 	}
@@ -1240,7 +1444,7 @@ func (m *Model) viewHelp() string {
 			{"j / k", "move (list, or scroll description)"},
 			{"h / l", "focus list / description panel"},
 			{"gg / G", "jump to top / bottom"},
-			{"ctrl+d / ctrl+u", "half-page scroll"},
+			{"ctrl+d / ctrl+u", "half page (list or description)"},
 			{"⏎", "open problem (dashboard: open list / jump to pick)"},
 		}},
 		{"filter & find", []row{
@@ -1252,13 +1456,20 @@ func (m *Model) viewHelp() string {
 			{"p", "pick a random problem (honours filters)"},
 			{"esc", "leave the active study list"},
 			{"dd", "hide problem from rotation"},
+			{"U", "undo the last dd"},
 		}},
 		{"solve", []row{
-			{"i", "edit in $EDITOR — in tmux, opens its own window"},
+			{"i", "edit in $EDITOR — in tmux, its own window (one per problem)"},
+			{"t", "sensei — a Sonnet tutor for this problem; hints, never answers"},
 			{"r", "run the judge"},
 			{"v", "view diagrams fullscreen (sharpest; n/p to cycle)"},
 			{"H", "reveal next hint (lowers your SRS grade)"},
 			{"L", "cycle language: python → cpp → c"},
+		}},
+		{"tmux (prefix = your tmux prefix)", []row{
+			{"prefix s", "switch: browser, open solutions, recent ones"},
+			{"prefix t", "toggle sensei for the problem you're on"},
+			{"", "   closing it ends the session; reopening resumes it"},
 		}},
 		{"other", []row{
 			{"D / tab", "toggle dashboard"},
@@ -1268,16 +1479,40 @@ func (m *Model) viewHelp() string {
 		}},
 	}
 
-	var b strings.Builder
-	b.WriteString(styleHeader.Render("dojo — all keys") + "\n")
-	for _, sec := range sections {
-		b.WriteString("\n" + styleMedium.Render(sec.title) + "\n")
-		for _, r := range sec.rows {
-			b.WriteString("  " + styleHeader.Render(fmt.Sprintf("%-16s", r.k)) + r.d + "\n")
+	column := func(secs []struct {
+		title string
+		rows  []row
+	}) string {
+		var b strings.Builder
+		for i, sec := range secs {
+			if i > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString(styleMedium.Render(sec.title) + "\n")
+			for _, r := range sec.rows {
+				b.WriteString("  " + styleHeader.Render(fmt.Sprintf("%-16s", r.k)) + r.d + "\n")
+			}
 		}
+		return strings.TrimRight(b.String(), "\n")
 	}
-	b.WriteString("\n" + styleDim.Render("esc / R to close"))
-	box := styleFocused.Padding(1, 2).Render(b.String())
+	body := column(sections)
+	// too tall for the terminal: two columns, split near the middle
+	if lipgloss.Height(body)+8 > m.height {
+		lines, half := 0, lipgloss.Height(body)/2
+		split := len(sections)
+		for i, sec := range sections {
+			if lines >= half {
+				split = i
+				break
+			}
+			lines += len(sec.rows) + 2
+		}
+		body = lipgloss.JoinHorizontal(lipgloss.Top, column(sections[:split]), "    ",
+			column(sections[split:]))
+	}
+	text := styleHeader.Render("dojo — all keys") + "\n\n" + body + "\n\n" +
+		styleDim.Render("esc / R to close")
+	box := styleFocused.Padding(1, 2).Render(text)
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }
 

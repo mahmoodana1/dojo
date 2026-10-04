@@ -91,6 +91,31 @@ Vim grammar: `j/k` (list or scroll, focus-dependent), `h/l` panel focus,
 suspends the TUI via `tea.ExecProcess($EDITOR file)`, and on editor exit the
 judge runs automatically — write, `:wq`, verdict. No context switch.
 
+**In tmux** the editor gets its own window instead (`internal/app/tmux.go`),
+tagged with window options (`@dojo-problem`, `@dojo-edit`, `@dojo-title`) so
+other tools can tell what it is. The browser publishes the problem on screen in
+its own window's `@dojo-problem`. Several solutions can be open at once, so
+everything about a solve is keyed by problem, not by "the one on screen":
+`editorDoneMsg`/`reportMsg` carry the problem id, and edit start times,
+revealed hints and last verdicts are per-problem maps. On startup dojo binds
+`prefix s`/`prefix t` to `run-shell` calls back into its own binary (`dojo
+popup …`, since `run-shell` is where tmux expands formats like
+`#{window_id}`). Each binding is conditional on the dojo options and falls
+back to the key's previous binding. A unix socket (`ControlSocket`) lets the
+switcher ask the running browser to open a solution.
+
+**Sensei** (`internal/tutor`, `cmd/dojo/sensei.go`): `dojo tutor N` runs in
+the popup and attaches to session `sensei-N` on a private tmux server
+(`-L dojo-sensei`). Popups get no key bindings of their own, so that inner
+server is what makes `prefix t` work as a toggle: it kills the session. With
+`destroy-unattached`, closing the popup any other way does the same, so claude
+never outlives the popup. `dojo tutor-run N` starts `claude --model
+claude-sonnet-5-5` with a teacher system prompt, read-only tools, and
+`--setting-sources project,local --strict-mcp-config`. It resumes the
+problem's session id from `.sensei-session` when Claude has a transcript for
+it. The cwd is always the solutions root, so Claude Code's trust question
+comes up once rather than per problem.
+
 The file's contents are LeetCode's `codeSnippets` entry for the chosen
 language, verbatim, under a two-line comment header — so the finished solution
 pastes into the site unchanged. dojo only synthesises a stub when no snippet

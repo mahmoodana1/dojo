@@ -135,13 +135,50 @@ There is no submit button — **closing your editor is the submit**:
 5. To retry, `i` reopens your existing code (never overwritten); `r` re-judges
    without editing.
 
+## Several solutions at once (tmux)
+
+Inside tmux, each solution gets its own window (`✎1 Two Sum`), at most one per
+problem — `i` on a problem that already has one just switches to it. You can
+keep browsing while editors are open; whichever editor you close, *that*
+problem is judged and the browser jumps to its verdict.
+
+| Key | Action |
+|-----|--------|
+| `prefix s` | switcher popup: the browser, every open solution, then recent solutions with no window (`⏎` on one of those asks dojo to open it). Type to filter. |
+| `prefix t` | toggle **sensei** for the problem you're on (see below) |
+
+The dojo session's status line lists the browser and each open solution, with
+the current one highlighted. Both prefix keys are dojo's only while dojo is
+running and only in its session; elsewhere they keep whatever they did before
+(tmux's `choose-tree` and `clock-mode` by default).
+
+## Sensei — a tutor per problem
+
+`t` in the browser, or `prefix t` from any of the problem's windows, opens a
+floating popup with a Claude **Sonnet 5.5** session that teaches the problem
+without solving it. It reads your current solution and the judge's latest
+verdict (`.last-run.txt`), points at the line and the input that break your
+code, and climbs a hint ladder one rung at a time. It never writes the
+solution, however you ask.
+
+- **Only alive while open.** `prefix t` inside the popup (or `prefix q`, or
+  `/exit`) closes it, and that ends the process. Nothing keeps running.
+- **Saved per problem.** Each problem has its own conversation (id in
+  `.sensei-session` in the solution folder). Reopening resumes it.
+- **Isolated.** It runs with read-only tools (Read/Grep/Glob), its own system
+  prompt, and none of your Claude Code plugins, hooks or MCP servers.
+
+It needs the `claude` CLI, logged in. The first time, Claude Code may ask
+whether to trust your solutions folder: choose *Yes*. It asks once, because
+every sensei runs from the solutions root.
+
 ## Keys
 
 | Key | Action |
 |-----|--------|
 | `j` / `k` | move down / up (list or description scroll) |
 | `h` / `l` | focus list / description panel |
-| `gg` / `G` / `ctrl+d` / `ctrl+u` | vim jumps & half-page scrolls |
+| `gg` / `G` / `ctrl+d` / `ctrl+u` | vim jumps & half pages (list or description) |
 | `/` | search: fuzzy on title, plus tokens `d:easy` `t:graph` `s:todo` (mix freely: `/d:h t:dp knapsack`) |
 | `1` / `2` / `3` | toggle Easy / Medium / Hard filters |
 | `T` | topic browser (tags with counts; `⏎`/`space` toggle, `c` clear, `esc` close) |
@@ -149,7 +186,8 @@ There is no submit button — **closing your editor is the submit**:
 | `o` | cycle sort: problem № → acceptance ↑ (hardest) → acceptance ↓ (easiest) |
 | `p` | random unsolved problem honouring active filters (LeetCode "Pick One") |
 | `R` or `?` | full keybinding cheat sheet (modal) |
-| `dd` | hide problem from rotation |
+| `dd` | hide problem from rotation (`U` undoes) |
+| `t` | sensei: a tutor for this problem (see above) |
 | `Enter` | open problem (on dashboard: open a study list, or jump straight into a due-review / suggested problem) |
 | `esc` | leave the active study list (back to all problems) |
 | `i` | edit solution in `$EDITOR` (judged automatically on exit). Inside tmux this opens a separate tmux window so the problem page stays put. |
