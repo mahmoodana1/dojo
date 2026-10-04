@@ -156,15 +156,30 @@ func tutorPopup(fid int64, st *store.Store) error {
 		return err
 	}
 	prefix, _ := tmux.Run("show-options", "-gv", "prefix")
+	// The config is executed by tmux, so it lives only in the user's own
+	// cache dir (never a shared one like /tmp) and only they can touch it.
 	cache, err := os.UserCacheDir()
 	if err != nil {
-		cache = os.TempDir()
-	}
-	conf := filepath.Join(cache, "dojo", "sensei.tmux.conf")
-	if err := os.MkdirAll(filepath.Dir(conf), 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(conf, []byte(tutor.InnerConf(prefix)), 0o644); err != nil {
+	cacheDir := filepath.Join(cache, "dojo")
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		return err
+	}
+	if err := os.Chmod(cacheDir, 0o700); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(cacheDir, "sensei-*.tmux.conf")
+	if err != nil {
+		return err
+	}
+	conf := f.Name()
+	_, err = f.WriteString(tutor.InnerConf(prefix))
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		os.Remove(conf)
 		return err
 	}
 	tmuxBin, err := exec.LookPath("tmux")
@@ -172,8 +187,11 @@ func tutorPopup(fid int64, st *store.Store) error {
 		return err
 	}
 	cmd := tmux.Quote(self()) + " tutor-run " + strconv.FormatInt(fid, 10)
-	argv := []string{"tmux", "-L", tutor.InnerSocket, "-f", conf,
+	// -f /dev/null keeps the user's ~/.tmux.conf out; the sensei config is
+	// sourced explicitly and deleted as soon as tmux has read it.
+	argv := []string{"tmux", "-L", tutor.InnerSocket, "-f", "/dev/null",
 		"source-file", conf, ";",
+		"run-shell", "rm -f " + tmux.Quote(conf), ";",
 		"new-session", "-A", "-s", innerSession(fid), "-c", dir, cmd}
 	return syscall.Exec(tmuxBin, argv, withoutTmux(os.Environ()))
 }

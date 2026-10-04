@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -35,10 +36,14 @@ func ControlSocket() string {
 func Listen(p *tea.Program) (stop func()) {
 	path := ControlSocket()
 	_ = os.Remove(path)
+	// owner-only from the moment it exists: the fallback dir may be /tmp
+	old := syscall.Umask(0o177)
 	ln, err := net.Listen("unix", path)
+	syscall.Umask(old)
 	if err != nil {
 		return func() {}
 	}
+	_ = os.Chmod(path, 0o600)
 	go func() {
 		for {
 			conn, err := ln.Accept()
