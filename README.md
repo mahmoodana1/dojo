@@ -155,7 +155,7 @@ running and only in its session; elsewhere they keep whatever they did before
 ## Sensei — a tutor per problem
 
 `t` in the browser, or `prefix t` from any of the problem's windows, opens a
-floating popup with a Claude **Sonnet 5.5** session that teaches the problem
+floating popup with a Claude **Haiku 5.5** session that teaches the problem
 without solving it. It reads your current solution and the judge's latest
 verdict (`.last-run.txt`), points at the line and the input that break your
 code, and climbs a hint ladder one rung at a time. It never writes the

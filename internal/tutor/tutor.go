@@ -1,4 +1,4 @@
-// Package tutor is sensei: a Claude Sonnet session per problem that teaches
+// Package tutor is sensei: a Claude Haiku session per problem that teaches
 // without solving. It runs only while its popup is open — closing the popup
 // ends the process — and the conversation lives on disk, one per problem, so
 // reopening picks up where the last one stopped.
@@ -17,7 +17,7 @@ import (
 )
 
 // Model is the Claude model sensei runs on.
-const Model = "claude-sonnet-5-5"
+const Model = "claude-haiku-5-5"
 
 // SessionFile, inside a problem's solution directory, holds the id of that
 // problem's conversation.
@@ -100,7 +100,7 @@ func validUUID(s string) bool {
 	return true
 }
 
-// Args is the claude command line for a problem's session: Sonnet, the
+// Args is the claude command line for a problem's session: Haiku, the
 // teacher prompt in place of Claude Code's own, read-only tools, and none of
 // the user's plugins, hooks or MCP servers.
 func Args(p Problem, id string, resume bool) []string {

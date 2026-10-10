@@ -59,8 +59,8 @@ func TestSessionIDReplacesGarbage(t *testing.T) {
 func TestArgs(t *testing.T) {
 	p := Problem{FrontendID: 1, Title: "Two Sum", Difficulty: "Easy", Dir: "/x/0001-two-sum"}
 	fresh := Args(p, "abc", false)
-	if i := slices.Index(fresh, "--model"); i < 0 || fresh[i+1] != "claude-sonnet-5-5" {
-		t.Errorf("model not sonnet 5.5: %v", fresh)
+	if i := slices.Index(fresh, "--model"); i < 0 || fresh[i+1] != "claude-haiku-5-5" {
+		t.Errorf("model not haiku 5.5: %v", fresh)
 	}
 	if i := slices.Index(fresh, "--session-id"); i < 0 || fresh[i+1] != "abc" {
 		t.Errorf("fresh session not started by id: %v", fresh)

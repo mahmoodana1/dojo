@@ -1460,7 +1460,7 @@ func (m *Model) viewHelp() string {
 		}},
 		{"solve", []row{
 			{"i", "edit in $EDITOR — in tmux, its own window (one per problem)"},
-			{"t", "sensei — a Sonnet tutor for this problem; hints, never answers"},
+			{"t", "sensei — a Haiku tutor for this problem; hints, never answers"},
 			{"r", "run the judge"},
 			{"v", "view diagrams fullscreen (sharpest; n/p to cycle)"},
 			{"H", "reveal next hint (lowers your SRS grade)"},

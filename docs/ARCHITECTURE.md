@@ -110,7 +110,7 @@ the popup and attaches to session `sensei-N` on a private tmux server
 server is what makes `prefix t` work as a toggle: it kills the session. With
 `destroy-unattached`, closing the popup any other way does the same, so claude
 never outlives the popup. `dojo tutor-run N` starts `claude --model
-claude-sonnet-5-5` with a teacher system prompt, read-only tools, and
+claude-haiku-5-5` with a teacher system prompt, read-only tools, and
 `--setting-sources project,local --strict-mcp-config`. It resumes the
 problem's session id from `.sensei-session` when Claude has a transcript for
 it. The cwd is always the solutions root, so Claude Code's trust question
