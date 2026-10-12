@@ -43,17 +43,35 @@ const (
 	panelDetail
 )
 
+// Plain black glass, shared with taskvim: neutral greys with no blue or
+// purple cast for chrome, soft pastels only for content.
 var (
-	styleEasy    = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	styleMedium  = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-	styleHard    = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-	styleDim     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	styleCursor  = lipgloss.NewStyle().Reverse(true)
-	stylePass    = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true)
-	styleFail    = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
-	styleFocused = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("6"))
-	styleBlurred = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("8"))
-	styleHeader  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
+	colText  = lipgloss.Color("#dedede")
+	colSub   = lipgloss.Color("#969696")
+	colMuted = lipgloss.Color("#606060")
+	colFaint = lipgloss.Color("#2c2c2c")
+	colSel   = lipgloss.Color("#282828")
+	colGreen = lipgloss.Color("#a6e3a1")
+	colSand  = lipgloss.Color("#f9e2af")
+	colRose  = lipgloss.Color("#eba0ac")
+	colWarm  = lipgloss.Color("#fab387")
+	colBlue  = lipgloss.Color("#89b4fa")
+	colTeal  = lipgloss.Color("#94e2d5")
+)
+
+var (
+	styleEasy    = lipgloss.NewStyle().Foreground(colGreen)
+	styleMedium  = lipgloss.NewStyle().Foreground(colSand)
+	styleHard    = lipgloss.NewStyle().Foreground(colRose)
+	styleDim     = lipgloss.NewStyle().Foreground(colMuted)
+	styleFaint   = lipgloss.NewStyle().Foreground(colFaint)
+	styleSub     = lipgloss.NewStyle().Foreground(colSub)
+	styleCursor  = lipgloss.NewStyle().Background(colSel).Foreground(colText).Bold(true)
+	stylePass    = lipgloss.NewStyle().Foreground(colGreen).Bold(true)
+	styleFail    = lipgloss.NewStyle().Foreground(colRose).Bold(true)
+	styleFocused = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colSub)
+	styleBlurred = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colFaint)
+	styleHeader  = lipgloss.NewStyle().Bold(true).Foreground(colText)
 )
 
 // messages

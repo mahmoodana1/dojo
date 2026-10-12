@@ -228,8 +228,8 @@ func (s *switcher) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 var (
-	swSection = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	swActive  = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Bold(true)
+	swSection = lipgloss.NewStyle().Foreground(colMuted)
+	swActive  = lipgloss.NewStyle().Foreground(colText).Bold(true)
 )
 
 func (s *switcher) View() string {

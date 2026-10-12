@@ -29,15 +29,15 @@ type beltRank struct {
 // beltLadder is the lifetime-XP progression. Thresholds roughly double so
 // each belt is a real grind.
 var beltLadder = []beltRank{
-	{"white", lipgloss.Color("15"), 0},
-	{"yellow", lipgloss.Color("11"), 100},
-	{"orange", lipgloss.Color("208"), 300},
-	{"green", lipgloss.Color("2"), 700},
-	{"blue", lipgloss.Color("4"), 1400},
-	{"purple", lipgloss.Color("5"), 2500},
-	{"brown", lipgloss.Color("130"), 4000},
-	{"red", lipgloss.Color("1"), 6000},
-	{"black", lipgloss.Color("8"), 9000},
+	{"white", colText, 0},
+	{"yellow", colSand, 100},
+	{"orange", colWarm, 300},
+	{"green", colGreen, 700},
+	{"blue", colBlue, 1400},
+	{"purple", lipgloss.Color("#cba6f7"), 2500},
+	{"brown", lipgloss.Color("#c2956e"), 4000},
+	{"red", colRose, 6000},
+	{"black", colMuted, 9000},
 }
 
 // beltForXP returns the current belt, the next one (nil at black), and the
@@ -69,20 +69,23 @@ func padTo(s string, w int) string {
 	return s
 }
 
-// card draws a titled rounded box, w cells wide, around the body lines.
-func card(title string, w int, accent lipgloss.Color, body []string) string {
-	bs := lipgloss.NewStyle().Foreground(accent)
-	iw := w - 2
-	dashes := max(0, w-lipgloss.Width(title)-5)
+// card draws a borderless panel w cells wide: the title and a faint rule,
+// the body, then a blank row. It is exactly as tall as the old rounded box
+// was, so the grid keeps its shape, and the last 3 cells of every row are a
+// gutter so neighbouring columns never touch.
+func card(title string, w int, _ lipgloss.Color, body []string) string {
+	iw := max(1, w-3)
+	rule := max(0, iw-lipgloss.Width(title)-1)
 	var b strings.Builder
-	b.WriteString(bs.Render("╭─ ") + styleHeader.Render(title) + bs.Render(" "+strings.Repeat("─", dashes)+"╮") + "\n")
+	b.WriteString(padTo(styleSub.Render(title)+" "+styleFaint.Render(strings.Repeat("─", rule)), w) + "\n")
 	for _, line := range body {
-		b.WriteString(bs.Render("│") + padTo(" "+line, iw) + bs.Render("│") + "\n")
+		b.WriteString(padTo(padTo(line, iw)+"   ", w) + "\n")
 	}
-	b.WriteString(bs.Render("╰" + strings.Repeat("─", iw) + "╯"))
+	b.WriteString(strings.Repeat(" ", max(0, w)))
 	return b.String()
 }
 
+// bar is a thin progress line: filled in the given style, the rest faint.
 func bar(frac float64, width int, on lipgloss.Style) string {
 	if frac < 0 {
 		frac = 0
@@ -90,8 +93,18 @@ func bar(frac float64, width int, on lipgloss.Style) string {
 	if frac > 1 {
 		frac = 1
 	}
+	width = max(0, width)
 	filled := int(frac*float64(width) + 0.5)
-	return on.Render(strings.Repeat("█", filled)) + styleDim.Render(strings.Repeat("░", width-filled))
+	return on.Render(strings.Repeat("━", filled)) + styleFaint.Render(strings.Repeat("─", width-filled))
+}
+
+// hints renders "key what   key what": keys grey, meanings one step fainter.
+func hints(pairs ...string) string {
+	var parts []string
+	for i := 0; i+1 < len(pairs); i += 2 {
+		parts = append(parts, styleSub.Render(pairs[i])+styleDim.Render(" "+pairs[i+1]))
+	}
+	return strings.Join(parts, "   ")
 }
 
 // ago humanizes a past timestamp: now / 37m / 5h / 3d.
@@ -132,13 +145,13 @@ func (m *Model) cardBelt(w int, e float64) string {
 	bs := lipgloss.NewStyle().Foreground(cur.color).Bold(true)
 	xp := countUp(m.stats.TotalXP, e)
 	lines := []string{
-		fmt.Sprintf("🥋 %s · level %d", bs.Render(cur.name+" belt"), lv),
+		bs.Render(cur.name+" belt") + styleDim.Render(fmt.Sprintf("  level %d", lv)),
 	}
 	if next != nil {
 		span := next.minXP - cur.minXP
 		frac := float64(xp-cur.minXP) / float64(span)
 		lines = append(lines,
-			fmt.Sprintf("%s %d xp", bar(frac*e, w-14, stylePass), xp),
+			fmt.Sprintf("%s  %d xp", bar(frac*e, w-16, lipgloss.NewStyle().Foreground(cur.color)), xp),
 			styleDim.Render(fmt.Sprintf("%d xp → %s belt", next.minXP-m.stats.TotalXP, next.name)))
 	} else {
 		lines = append(lines, stylePass.Render(fmt.Sprintf("%d xp — mastery. teach others.", xp)))
@@ -150,18 +163,19 @@ func (m *Model) cardToday(w int, e float64, now time.Time) string {
 	s := m.stats
 	goal := fmt.Sprintf("%d/%d", s.TodaySolved, dailyGoal)
 	if s.TodaySolved >= dailyGoal {
-		goal = stylePass.Render(goal + " — goal met! 🎉")
+		goal = stylePass.Render(goal + " — goal met ✓")
 	}
-	flame := "🔥"
+	// The streak breathes gently between warm and sand while the dashboard is open.
+	streakStyle := lipgloss.NewStyle().Foreground(colWarm)
 	if pulse(time.Since(m.dashEnteredAt), 1200*time.Millisecond) < 0.5 {
-		flame = styleMedium.Render("🔥")
+		streakStyle = lipgloss.NewStyle().Foreground(colSand)
 	}
 	lines := []string{
-		fmt.Sprintf("🎯 %s %s", bar(float64(min(s.TodaySolved, dailyGoal))/dailyGoal*e, w-12, stylePass), goal),
-		fmt.Sprintf("%s %s · %d att · %dm today",
-			flame,
-			stylePass.Render(fmt.Sprintf("%d-day streak", countUp(s.StreakDays, e))),
-			countUp(s.TodayAttempts, e), countUp(s.TodayMinutes, e)),
+		fmt.Sprintf("%s  %s", bar(float64(min(s.TodaySolved, dailyGoal))/dailyGoal*e, w-14, stylePass), goal),
+		fmt.Sprintf("%s %s",
+			streakStyle.Render(fmt.Sprintf("%d-day streak", countUp(s.StreakDays, e))),
+			styleDim.Render(fmt.Sprintf("· %d att · %dm today",
+				countUp(s.TodayAttempts, e), countUp(s.TodayMinutes, e)))),
 		fmt.Sprintf("solved %s of %s · %s xp today",
 			stylePass.Render(fmt.Sprint(countUp(s.Solved, e))),
 			fmt.Sprint(s.Total), styleMedium.Render(fmt.Sprint(countUp(s.TodayXP, e)))),
@@ -176,13 +190,13 @@ func (m *Model) cardToday(w int, e float64, now time.Time) string {
 func confettiLine(w, seed int) string {
 	rng := rand.New(rand.NewSource(int64(seed)))
 	glyphs := []string{"✦", "✶", "*", "·", "❋"}
-	colors := []string{"1", "2", "3", "4", "5", "6"}
+	colors := []lipgloss.Color{colBlue, colWarm, colTeal, colRose, colGreen, colSand}
 	cells := make([]string, w)
 	for i := range cells {
 		cells[i] = " "
 	}
 	for i := 0; i < w/3; i++ {
-		st := lipgloss.NewStyle().Foreground(lipgloss.Color(colors[rng.Intn(len(colors))]))
+		st := lipgloss.NewStyle().Foreground(colors[rng.Intn(len(colors))])
 		cells[rng.Intn(w)] = st.Render(glyphs[rng.Intn(len(glyphs))])
 	}
 	return strings.Join(cells, "")
@@ -198,7 +212,7 @@ func (m *Model) cardProgress(w int, e float64) string {
 		}
 		lines = append(lines, fmt.Sprintf("%s %s %d/%d",
 			diffStyle(d).Render(fmt.Sprintf("%-6s", d)),
-			bar(frac*e, w-18, diffStyle(d)), s.DiffSolved[d], s.DiffTotal[d]))
+			bar(frac*e, w-22, diffStyle(d)), s.DiffSolved[d], s.DiffTotal[d]))
 	}
 	if len(s.WeakTags) > 0 {
 		lines = append(lines, styleDim.Render("weak: ")+styleHard.Render(strings.Join(s.WeakTags, " · ")))
@@ -209,20 +223,21 @@ func (m *Model) cardProgress(w int, e float64) string {
 func (m *Model) cardHeatmap(w int, e float64) string {
 	cell := func(n int) string {
 		switch {
+		// Steps toward the shared pastel green rather than a neon ramp.
 		case n <= 0:
-			return styleDim.Render("·")
+			return styleFaint.Render("·")
 		case n == 1:
-			return styleEasy.Render("░")
+			return lipgloss.NewStyle().Foreground(lipgloss.Color("#466048")).Render("■")
 		case n <= 3:
-			return styleEasy.Render("▒")
+			return lipgloss.NewStyle().Foreground(lipgloss.Color("#648c62")).Render("■")
 		case n <= 5:
-			return stylePass.Render("▓")
+			return lipgloss.NewStyle().Foreground(lipgloss.Color("#85b981")).Render("■")
 		default:
-			return stylePass.Render("█")
+			return styleEasy.Render("■")
 		}
 	}
 	weeks := len(m.stats.Activity) / 7
-	maxWeeks := (w - 6) / 2
+	maxWeeks := (w - 5) / 2
 	start := 0
 	if weeks > maxWeeks {
 		start = weeks - maxWeeks
@@ -232,7 +247,7 @@ func (m *Model) cardHeatmap(w int, e float64) string {
 		var b strings.Builder
 		for c := start; c < weeks; c++ {
 			if stagger(e, c-start, weeks-start) < 1 {
-				b.WriteString(styleDim.Render("·") + " ")
+				b.WriteString(styleFaint.Render("·") + " ")
 				continue
 			}
 			b.WriteString(cell(m.stats.Activity[c*7+r]) + " ")
@@ -265,7 +280,7 @@ func (m *Model) cardLists(w int, e float64, row func(string) string) string {
 	if start > 0 {
 		lines = append(lines, styleDim.Render(fmt.Sprintf("↑ %d more", start)))
 	}
-	nameW := max(8, w-16-8)
+	nameW := max(8, w-16-11)
 	// row() must fire once per entry, in order, to keep dashCursor indexes
 	// aligned across cards — entries outside the window are consumed too.
 	for i, en := range entries {
@@ -307,7 +322,7 @@ func (m *Model) cardForecast(w int, e float64) string {
 				lvl = 7
 			}
 		}
-		st := styleDim
+		st := styleFaint
 		if n > 0 {
 			st = styleMedium
 		}
@@ -326,7 +341,7 @@ func (m *Model) cardForecast(w int, e float64) string {
 func (m *Model) cardQueue(w int, probRow func(string, *store.Problem) string) string {
 	s := m.stats
 	var lines []string
-	lines = append(lines, styleHeader.Render("due for review")+styleDim.Render(" — srs says now"))
+	lines = append(lines, styleHeader.Render("due for review")+styleDim.Render("  srs says now"))
 	if len(s.Due) == 0 {
 		lines = append(lines, styleDim.Render("nothing due — the queue is clear ✓"))
 	}
@@ -334,7 +349,7 @@ func (m *Model) cardQueue(w int, probRow func(string, *store.Problem) string) st
 		lines = append(lines, probRow(styleMedium.Render("↻"), &s.Due[i]))
 	}
 	lines = append(lines, "")
-	lines = append(lines, styleHeader.Render("sensei suggests")+styleDim.Render(" — fresh picks"))
+	lines = append(lines, styleHeader.Render("sensei suggests")+styleDim.Render("  fresh picks"))
 	if len(s.Suggested) == 0 {
 		lines = append(lines, styleDim.Render("nothing left — solve everything again, faster"))
 	}
@@ -363,28 +378,30 @@ func (m *Model) cardRecent(w int) string {
 
 func (m *Model) cardTrophies(w int, e float64) string {
 	r := m.stats.Records
+	// Labels share one column so the values line up as a table.
+	label := func(l string) string { return styleDim.Render(fmt.Sprintf("%-16s", l)) }
 	var lines []string
 	if r.FastestTitle != "" {
-		lines = append(lines, fmt.Sprintf("⚡ fastest green: %s (%s)",
-			stylePass.Render(fmt.Sprintf("%.0fm", r.FastestMin)),
-			truncate.StringWithTail(r.FastestTitle, uint(max(6, w-26)), "…")))
+		lines = append(lines, label("fastest green")+
+			stylePass.Render(fmt.Sprintf("%.0fm", r.FastestMin))+styleDim.Render(" · ")+
+			truncate.StringWithTail(r.FastestTitle, uint(max(6, w-30)), "…"))
 	}
 	if r.BestDay > 0 {
-		lines = append(lines, fmt.Sprintf("🏆 best day: %s (%s)",
-			stylePass.Render(fmt.Sprintf("%d solve(s)", countUp(r.BestDay, e))), r.BestDayDate))
+		lines = append(lines, label("best day")+
+			stylePass.Render(fmt.Sprintf("%d solve(s)", countUp(r.BestDay, e)))+styleDim.Render(" · "+r.BestDayDate))
 	}
 	if r.LongestRun > 0 {
-		lines = append(lines, fmt.Sprintf("🔥 longest streak: %s",
-			stylePass.Render(fmt.Sprintf("%d day(s)", countUp(r.LongestRun, e)))))
+		lines = append(lines, label("longest streak")+
+			lipgloss.NewStyle().Foreground(colWarm).Render(fmt.Sprintf("%d day(s)", countUp(r.LongestRun, e))))
 	}
 	if r.FirstTryPct >= 0 {
-		lines = append(lines, fmt.Sprintf("🎯 first-try rate: %s",
-			styleMedium.Render(fmt.Sprintf("%d%%", countUp(r.FirstTryPct, e)))))
+		lines = append(lines, label("first-try rate")+
+			styleMedium.Render(fmt.Sprintf("%d%%", countUp(r.FirstTryPct, e))))
 	}
 	if len(lines) == 0 {
 		lines = append(lines, styleDim.Render("no records yet — go set some"))
 	}
-	return card("trophies", w, lipgloss.Color("11"), lines)
+	return card("trophies", w, colSand, lines)
 }
 
 // --- assembly ----------------------------------------------------------------
@@ -410,7 +427,7 @@ func (m *Model) viewDashboard() string {
 
 	// header: identity left, live clock right, quote underneath
 	beltTag := lipgloss.NewStyle().Foreground(cur.color).Bold(true).Render(cur.name + " belt")
-	left := styleHeader.Render("道場 dojo") + styleDim.Render(" · ") + "🥋 " + beltTag +
+	left := styleHeader.Render("道場 dojo") + styleDim.Render("   ") + beltTag +
 		styleDim.Render(" — "+greeting(now))
 	clock := styleHeader.Render(now.Format("Mon 02 Jan · 15:04:05"))
 	gap := max(1, m.width-4-lipgloss.Width(left)-lipgloss.Width(clock))
@@ -418,7 +435,7 @@ func (m *Model) viewDashboard() string {
 		m.quoteStyle().Render("“"+m.quote+"”") + "\n"
 
 	// shimmer: the selected row's marker cycles through cyan shades
-	shimmerShades := []string{"6", "14", "51", "14"}
+	shimmerShades := []string{"#fab387", "#f9c8a8", "#fab387", "#e89a6e"}
 	frame := int(time.Since(m.dashEnteredAt) / (250 * time.Millisecond))
 	markerStyle := lipgloss.NewStyle().Foreground(
 		lipgloss.Color(shimmerShades[frame%len(shimmerShades)])).Bold(true)
@@ -444,7 +461,7 @@ func (m *Model) viewDashboard() string {
 	}
 	colW := (m.width - 4 - (cols - 1)) / cols
 
-	titleW := uint(max(10, colW-15))
+	titleW := uint(max(10, colW-18))
 	probRow := func(icon string, p *store.Problem) string {
 		return row(fmt.Sprintf("%s %s %s %s", icon,
 			styleDim.Render(fmt.Sprintf("%4d", p.FrontendID)),
@@ -486,6 +503,6 @@ func (m *Model) viewDashboard() string {
 	}
 	body := lipgloss.JoinHorizontal(lipgloss.Top, rendered...)
 
-	hint := styleDim.Render("j/k move · ⏎ open · gg/G jump · D browse · R help · q quit")
+	hint := hints("j/k", "move", "⏎", "open", "gg/G", "jump", "D", "browse", "R", "help", "q", "quit")
 	return lipgloss.NewStyle().Padding(1, 2).Render(header + "\n" + body + "\n" + hint)
 }
