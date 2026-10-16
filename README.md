@@ -172,6 +172,32 @@ It needs the `claude` CLI, logged in. The first time, Claude Code may ask
 whether to trust your solutions folder: choose *Yes*. It asks once, because
 every sensei runs from the solutions root.
 
+## taskvim
+
+dojo writes into [taskvim](../taskvim)'s `data.json`, and taskvim picks the
+change up live. Nothing happens until that file exists.
+
+**A green run ticks off taskvim tasks**, each logged as a commit, the same as
+completing it there:
+
+- every open task that names the problem: `LC 42`, `leetcode 42`,
+  `trapping-rain-water`, or exactly `Trapping Rain Water`
+- every dojo habit not yet done this period, e.g. `Easy Dojo Problem ~daily`
+- one generic task, e.g. `do a medium leetcode problem`
+
+"Dojo habit" and "generic task" mean text with *dojo*, *leetcode* or *lc* plus
+*problem* or a difficulty. If it names a difficulty, only problems of that
+difficulty count. If the solve ticks nothing, it is still logged under a
+**LeetCode** course (once per problem per day), so taskvim's heatmap and
+streak count dojo work.
+
+**Due reviews become tasks** in LeetCode › Reviews, linked to the dashboard
+and dated when they fell due. Passing one in dojo completes it. If one stops
+being due, dojo removes it. This happens on launch and after every run, and
+`dojo taskvim` runs it on demand.
+
+`DOJO_TASKVIM=0` turns the bridge off. `TASKVIM_DATA` points it at another file.
+
 ## Keys
 
 | Key | Action |

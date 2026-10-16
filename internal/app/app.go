@@ -103,7 +103,7 @@ type editorDoneMsg struct {
 	lang      string
 }
 type tagCountsMsg []store.TagCount
-type attemptSavedMsg struct{}
+type attemptSavedMsg struct{ taskvim taskvimMsg }
 type jumpMsg struct{ id int64 }
 type errMsg struct{ err error }
 
@@ -233,7 +233,8 @@ func (m *Model) AttachTmux() { m.tm = setupTmux() }
 func (m *Model) DetachTmux() { m.tm.Teardown() }
 
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(m.loadProblems(), m.loadContent(), m.loadStats(), m.loadLists(), m.tickCmd())
+	return tea.Batch(m.loadProblems(), m.loadContent(), m.loadStats(), m.loadLists(), m.tickCmd(),
+		m.syncTaskvim())
 }
 
 // tickCmd keeps time flowing: ~12 FPS while the animated dashboard is
@@ -529,7 +530,15 @@ func (m *Model) saveAttempt(r reportMsg) tea.Cmd {
 			q := srs.Quality(passed, r.hints, now.Sub(r.start).Minutes(), 35)
 			_ = m.st.SaveReview(r.problemID, srs.Review(card, q, now))
 		}
-		return attemptSavedMsg{}
+		// after SaveReview, so a passed review is no longer due
+		var solved *store.Problem
+		if passed {
+			if d, err := m.st.GetDetail(r.problemID); err == nil {
+				solved = &d.Problem
+			}
+		}
+		res, err := SyncTaskvim(m.st, solved)
+		return attemptSavedMsg{taskvimMsg{res, err}}
 	}
 }
 
@@ -815,9 +824,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case attemptSavedMsg:
+		if line := msg.taskvim.summary(); line != "" {
+			m.status += "  ·  " + line // keep the verdict in front
+		}
 		// refresh every dashboard surface: problem statuses, stats/queues,
 		// and study-list progress all reflect the attempt immediately
 		return m, tea.Batch(m.loadProblems(), m.loadStats(), m.loadLists())
+
+	case taskvimMsg:
+		if line := msg.summary(); line != "" {
+			m.status = line
+		}
+		return m, nil
 
 	case errMsg:
 		m.running = false

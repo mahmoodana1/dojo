@@ -46,6 +46,13 @@ func subcommand(args []string, st func() *store.Store) (handled bool, err error)
 			return true, err
 		}
 		return true, tutorRun(fid, st())
+	case "taskvim": // taskvim — push due reviews into taskvim now
+		res, err := app.SyncTaskvim(st(), nil)
+		if err == nil {
+			fmt.Printf("taskvim: %d review task(s) added, %d removed, %d rescheduled\n",
+				res.Added, res.Removed, res.Moved)
+		}
+		return true, err
 	case "switch": // switch SESSION — inside the popup
 		if len(args) != 2 {
 			return true, errors.New("usage: dojo switch SESSION")

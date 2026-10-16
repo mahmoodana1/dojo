@@ -773,3 +773,33 @@ func (n *nullInt) Scan(src any) error {
 	}
 	return nil
 }
+
+// DueReview is a review falling due by some cutoff, with when.
+type DueReview struct {
+	Problem
+	Due time.Time
+}
+
+// ReviewsDueBy lists every review due at or before t, oldest first.
+func (s *Store) ReviewsDueBy(t time.Time) ([]DueReview, error) {
+	rows, err := s.db.Query(`
+		SELECT p.id, p.frontend_id, p.slug, p.title, r.due_at
+		FROM reviews r JOIN problems p ON p.id = r.problem_id
+		WHERE r.due_at <= ? AND p.hidden = 0
+		ORDER BY r.due_at`, t.UTC().Format(time.RFC3339))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DueReview
+	for rows.Next() {
+		var r DueReview
+		var due string
+		if err := rows.Scan(&r.ID, &r.FrontendID, &r.Slug, &r.Title, &due); err != nil {
+			return out, err
+		}
+		r.Due, _ = time.Parse(time.RFC3339, due)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
