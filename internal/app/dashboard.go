@@ -440,17 +440,6 @@ func (m *Model) viewDashboard() string {
 	markerStyle := lipgloss.NewStyle().Foreground(
 		lipgloss.Color(shimmerShades[frame%len(shimmerShades)])).Bold(true)
 
-	// row/probRow are shared by every selectable card and MUST be called in
-	// dashItems() order: All + lists, then due, then suggested.
-	idx := 0
-	row := func(line string) string {
-		selected := idx == m.dashCursor
-		idx++
-		if selected {
-			return markerStyle.Render("▸ ") + styleCursor.Render(line)
-		}
-		return "  " + line
-	}
 	// responsive grid: 3 / 2 / 1 columns
 	cols := 1
 	switch {
@@ -461,6 +450,17 @@ func (m *Model) viewDashboard() string {
 	}
 	colW := (m.width - 4 - (cols - 1)) / cols
 
+	// row/probRow are shared by every selectable card and MUST be called in
+	// dashItems() order: All + lists, then due, then suggested.
+	idx := 0
+	row := func(line string) string {
+		selected := idx == m.dashCursor
+		idx++
+		if selected {
+			return markerStyle.Render("▸ ") + highlight(line, colW-5, styleCursor)
+		}
+		return "  " + line
+	}
 	titleW := uint(max(10, colW-18))
 	probRow := func(icon string, p *store.Problem) string {
 		return row(fmt.Sprintf("%s %s %s %s", icon,

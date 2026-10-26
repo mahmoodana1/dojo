@@ -70,7 +70,7 @@ func (m *Model) viewImages() string {
 	imgs := localImages(m.detail.Slug)
 	if len(imgs) == 0 {
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center,
-			styleDim.Render("no diagrams for this problem\n\nesc to close"))
+			styleModal.Padding(1, 2).Render(styleDim.Render("no diagrams for this problem\n\nesc to close")))
 	}
 	idx := min(max(m.imageIdx, 0), len(imgs)-1)
 
@@ -79,12 +79,13 @@ func (m *Model) viewImages() string {
 		styleDim.Render(fmt.Sprintf("image %d/%d", idx+1, len(imgs))))
 
 	hint := styleDim.Render("n/p or ←/→ cycle · esc close")
-	art, err := ansiImage(imgs[idx], m.width-4, m.height-6)
+	art, err := ansiImage(imgs[idx], m.width-8, m.height-8)
 	if err != nil {
 		art = styleFail.Render("cannot render " + filepath.Base(imgs[idx]) + ": " + err.Error())
 	}
 	body := lipgloss.JoinVertical(lipgloss.Center, head, "", art, "", hint)
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, body)
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center,
+		styleModal.Padding(0, 1).Render(body))
 }
 
 func imageRoot() string {

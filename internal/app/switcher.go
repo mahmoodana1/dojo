@@ -251,7 +251,7 @@ func (s *switcher) View() string {
 		}
 		line := s.row(it)
 		if pos == s.cursor {
-			line = styleCursor.Render(line)
+			line = highlight(line, s.width, styleCursor)
 		}
 		b.WriteString(line + "\n")
 	}

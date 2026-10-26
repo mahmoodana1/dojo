@@ -20,6 +20,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/sahilm/fuzzy"
 
 	"github.com/mahmood/dojo/internal/runner"
@@ -50,7 +51,8 @@ var (
 	colSub   = lipgloss.Color("#969696")
 	colMuted = lipgloss.Color("#606060")
 	colFaint = lipgloss.Color("#2c2c2c")
-	colSel   = lipgloss.Color("#282828")
+	colSel   = lipgloss.Color("#404040")
+	colSelLo = lipgloss.Color("#262626")
 	colGreen = lipgloss.Color("#a6e3a1")
 	colSand  = lipgloss.Color("#f9e2af")
 	colRose  = lipgloss.Color("#eba0ac")
@@ -60,19 +62,30 @@ var (
 )
 
 var (
-	styleEasy    = lipgloss.NewStyle().Foreground(colGreen)
-	styleMedium  = lipgloss.NewStyle().Foreground(colSand)
-	styleHard    = lipgloss.NewStyle().Foreground(colRose)
-	styleDim     = lipgloss.NewStyle().Foreground(colMuted)
-	styleFaint   = lipgloss.NewStyle().Foreground(colFaint)
-	styleSub     = lipgloss.NewStyle().Foreground(colSub)
-	styleCursor  = lipgloss.NewStyle().Background(colSel).Foreground(colText).Bold(true)
-	stylePass    = lipgloss.NewStyle().Foreground(colGreen).Bold(true)
-	styleFail    = lipgloss.NewStyle().Foreground(colRose).Bold(true)
-	styleFocused = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colSub)
-	styleBlurred = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colFaint)
-	styleHeader  = lipgloss.NewStyle().Bold(true).Foreground(colText)
+	styleEasy     = lipgloss.NewStyle().Foreground(colGreen)
+	styleMedium   = lipgloss.NewStyle().Foreground(colSand)
+	styleHard     = lipgloss.NewStyle().Foreground(colRose)
+	styleDim      = lipgloss.NewStyle().Foreground(colMuted)
+	styleFaint    = lipgloss.NewStyle().Foreground(colFaint)
+	styleSub      = lipgloss.NewStyle().Foreground(colSub)
+	styleCursor   = lipgloss.NewStyle().Background(colSel).Foreground(colText).Bold(true)
+	styleCursorLo = lipgloss.NewStyle().Background(colSelLo).Foreground(colSub)
+	stylePass     = lipgloss.NewStyle().Foreground(colGreen).Bold(true)
+	styleFail     = lipgloss.NewStyle().Foreground(colRose).Bold(true)
+	styleFocused  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colSub)
+	styleBlurred  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colFaint)
+	styleHeader   = lipgloss.NewStyle().Bold(true).Foreground(colText)
+	// overlays (help, topics, diagrams) get a bright outline so they never
+	// blend into the black behind them
+	styleModal = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colText)
 )
+
+// highlight renders line as the selected row: a solid bar padded to w cells.
+// The row's own colours are dropped — each inner reset would otherwise cut
+// the background short after the first coloured glyph.
+func highlight(line string, w int, st lipgloss.Style) string {
+	return st.Render(padTo(ansi.Strip(line), max(w, lipgloss.Width(line))))
+}
 
 // messages
 type problemsMsg []store.Problem
@@ -1406,8 +1419,12 @@ func (m *Model) viewList() string {
 		}
 		line := fmt.Sprintf("%s %4d %s %s", statusIcon(p.Status), p.FrontendID,
 			diffStyle(p.Difficulty).Render(fmt.Sprintf("%-1.1s", p.Difficulty)), title)
-		if i == m.cursor && m.focus == panelList {
-			line = styleCursor.Render(line)
+		if i == m.cursor { // dimmer while the description has focus, never gone
+			st := styleCursorLo
+			if m.focus == panelList {
+				st = styleCursor
+			}
+			line = highlight(line, m.listWidth()-2, st)
 		}
 		rows = append(rows, line)
 	}
@@ -1453,11 +1470,11 @@ func (m *Model) viewTagPicker() string {
 		}
 		line := fmt.Sprintf(" %s %-28s %4d", mark, tc.Name, tc.Count)
 		if i == m.tagCursor {
-			line = styleCursor.Render(line)
+			line = highlight(line, 0, styleCursor)
 		}
 		rows = append(rows, line)
 	}
-	box := styleFocused.Padding(0, 1).Render(strings.Join(rows, "\n"))
+	box := styleModal.Padding(0, 1).Render(strings.Join(rows, "\n"))
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }
 
@@ -1548,7 +1565,7 @@ func (m *Model) viewHelp() string {
 	}
 	text := styleHeader.Render("dojo — all keys") + "\n\n" + body + "\n\n" +
 		styleDim.Render("esc / R to close")
-	box := styleFocused.Padding(1, 2).Render(text)
+	box := styleModal.Padding(1, 2).Render(text)
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
 }
 
